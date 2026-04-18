@@ -8,8 +8,24 @@ from utils.constants import SUPABASE_KEY, SUPABASE_URL
 from utils.data_helpers import normalize_columns
 
 
+def _supabase_config_ready() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def _notify_missing_config_once() -> None:
+    if st.session_state.get("_supabase_config_warned"):
+        return
+    st.session_state["_supabase_config_warned"] = True
+    st.error(
+        "Thiếu cấu hình Supabase. Vui lòng set SUPABASE_URL và SUPABASE_KEY "
+        "trong Streamlit Secrets hoặc Environment Variables."
+    )
+
+
 @st.cache_resource
 def get_http_session() -> requests.Session:
+    if not _supabase_config_ready():
+        _notify_missing_config_once()
     session = requests.Session()
     session.headers.update(
         {
@@ -67,6 +83,9 @@ def _get_next_id(table_name: str) -> int:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def lay_du_lieu_supabase(table_name: str, query_params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+    if not _supabase_config_ready():
+        _notify_missing_config_once()
+        return pd.DataFrame()
     params = dict(query_params or {})
     params.setdefault("order", "id.asc")
     session = get_http_session()
