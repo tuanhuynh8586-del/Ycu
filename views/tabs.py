@@ -419,7 +419,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
     df_dm["TỒN SẴN SÀNG"] = pd.to_numeric(df_dm.get("TỒN SẴN SÀNG", 0), errors="coerce").fillna(0).astype(int)
     df_dm["ĐANG HẤP"] = pd.to_numeric(df_dm.get("ĐANG HẤP", 0), errors="coerce").fillna(0).astype(int)
-    df_dm = stable_sort_dataframe(df_dm, fallback_name_columns=["TÊN BỘ DỤNG CỤ"])
+    df_dm = stable_sort_dataframe(
+        df_dm,
+        primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX"],
+        fallback_name_columns=["TÊN BỘ DỤNG CỤ"],
+    )
 
     df_holding = df_nk[df_nk["TÌNH TRẠNG"] == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
 

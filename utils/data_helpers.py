@@ -26,8 +26,24 @@ def stable_sort_dataframe(
     fallback_name_columns = fallback_name_columns or []
 
     sort_cols: List[str] = [c for c in primary_columns if c in result.columns]
-    if "ORDER_INDEX" in result.columns:
-        sort_cols.append("ORDER_INDEX")
+
+    # Ưu tiên các cột thứ tự tường minh để giữ fixed order sau khi update.
+    order_candidates = [
+        "ORDER_INDEX",
+        "THỨ TỰ",
+        "THU TU",
+        "STT",
+        "SỐ THỨ TỰ",
+        "SO THU TU",
+    ]
+    temp_numeric_sort_cols: List[str] = []
+    for idx, col in enumerate(order_candidates):
+        if col in result.columns:
+            temp_col = f"__sort_order_{idx}"
+            result[temp_col] = pd.to_numeric(result[col], errors="coerce")
+            sort_cols.append(temp_col)
+            temp_numeric_sort_cols.append(temp_col)
+
     if "id" in result.columns:
         sort_cols.append("id")
     for col in fallback_name_columns:
@@ -35,7 +51,10 @@ def stable_sort_dataframe(
             sort_cols.append(col)
 
     if sort_cols:
-        return result.sort_values(by=sort_cols, kind="stable", na_position="last")
+        sorted_df = result.sort_values(by=sort_cols, kind="stable", na_position="last")
+        if temp_numeric_sort_cols:
+            sorted_df = sorted_df.drop(columns=temp_numeric_sort_cols, errors="ignore")
+        return sorted_df
     return result
 
 

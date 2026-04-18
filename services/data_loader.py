@@ -22,6 +22,7 @@ def load_nhan_su_data() -> pd.DataFrame:
     if not df_nhan_su.empty:
         return stable_sort_dataframe(
             df_nhan_su,
+            primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX"],
             fallback_name_columns=["TÊN (ID)", "HỌ VÀ TÊN"],
         )
 
@@ -32,6 +33,7 @@ def load_nhan_su_data() -> pd.DataFrame:
     df_fallback.columns = [str(c).strip().upper() for c in df_fallback.columns]
     return stable_sort_dataframe(
         df_fallback,
+        primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX"],
         fallback_name_columns=["TÊN (ID)", "HỌ VÀ TÊN"],
     )
 
