@@ -44,19 +44,47 @@ def _load_local_env_file() -> None:
         return
 
 
-def _get_setting(*keys: str) -> str:
+def _get_setting_with_source(*keys: str):
+    normalized_keys = [k.strip() for k in keys if k and k.strip()]
+    lower_keys = [k.lower() for k in normalized_keys]
+
     for key in keys:
         val = os.getenv(key, "")
         if val:
-            return val.strip()
-    for key in keys:
+            return val.strip(), f"env:{key}"
+
+    # 1) Top-level secrets: SUPABASE_URL, SUPABASE_KEY...
+    for key in normalized_keys + lower_keys:
         try:
             val = st.secrets.get(key, "")
         except Exception:
             val = ""
-        if val:
-            return str(val).strip()
-    return ""
+        if isinstance(val, str) and val.strip():
+            return val.strip(), f"secrets:{key}"
+
+    # 2) Nested secrets:
+    # [supabase]
+    # url = "..."
+    # key = "..."
+    nested_candidates = ("supabase", "SUPABASE", "database", "DATABASE")
+    for section_name in nested_candidates:
+        try:
+            section = st.secrets.get(section_name, {})
+        except Exception:
+            section = {}
+        if not isinstance(section, dict):
+            continue
+        for key in normalized_keys + lower_keys:
+            for candidate in (key, key.lower(), key.upper(), key.replace("SUPABASE_", "").lower()):
+                val = section.get(candidate, "")
+                if isinstance(val, str) and val.strip():
+                    return val.strip(), f"secrets:{section_name}.{candidate}"
+    return "", "missing"
+
+
+def _get_setting(*keys: str) -> str:
+    value, _ = _get_setting_with_source(*keys)
+    return value
 
 
 def _normalize_supabase_url(raw_url: str) -> str:
@@ -72,5 +100,16 @@ def _normalize_supabase_url(raw_url: str) -> str:
 
 
 _load_local_env_file()
-SUPABASE_URL = _normalize_supabase_url(_get_setting("SUPABASE_URL"))
-SUPABASE_KEY = _get_setting("SUPABASE_KEY", "API_KEY")
+_RAW_SUPABASE_URL, _URL_SOURCE = _get_setting_with_source("SUPABASE_URL")
+_RAW_SUPABASE_KEY, _KEY_SOURCE = _get_setting_with_source("SUPABASE_KEY", "API_KEY")
+
+SUPABASE_URL = _normalize_supabase_url(_RAW_SUPABASE_URL)
+SUPABASE_KEY = _RAW_SUPABASE_KEY
+
+SUPABASE_DEBUG_INFO = {
+    "url_source": _URL_SOURCE,
+    "key_source": _KEY_SOURCE,
+    "url_loaded": bool(SUPABASE_URL),
+    "key_loaded": bool(SUPABASE_KEY),
+    "key_length": len(SUPABASE_KEY),
+}

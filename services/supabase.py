@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from utils.constants import SUPABASE_KEY, SUPABASE_URL
+from utils.constants import SUPABASE_DEBUG_INFO, SUPABASE_KEY, SUPABASE_URL
 from utils.data_helpers import normalize_columns
 
 
@@ -19,6 +19,14 @@ def _notify_missing_config_once() -> None:
     st.error(
         "Thiếu cấu hình Supabase. Vui lòng set SUPABASE_URL và SUPABASE_KEY "
         "trong Streamlit Secrets hoặc Environment Variables."
+    )
+    st.caption(
+        "Debug config: "
+        f"url_loaded={SUPABASE_DEBUG_INFO.get('url_loaded')} "
+        f"(source={SUPABASE_DEBUG_INFO.get('url_source')}), "
+        f"key_loaded={SUPABASE_DEBUG_INFO.get('key_loaded')} "
+        f"(source={SUPABASE_DEBUG_INFO.get('key_source')}), "
+        f"key_length={SUPABASE_DEBUG_INFO.get('key_length')}"
     )
 
 
