@@ -42,7 +42,10 @@ def login() -> None:
         if remember_me:
             token = str(uuid.uuid4()).lower()
             update_remember_token(user_login, token)
+            # dùng chung key với app.py để auto-login
             st.session_state["remember_token"] = token
+        else:
+            st.session_state.pop("remember_token", None)
 
         st.success(f"Chào {st.session_state['ho_ten']}!")
         time.sleep(1)

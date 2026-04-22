@@ -707,87 +707,109 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         c1, c2 = st.columns([1.2, 1.8])
         with c1:
             st.subheader("📍 Lấy dụng cụ")
-            if not fefo_tool_priority.empty:
-                near_df = fefo_tool_priority[
-                    fefo_tool_priority["SO_NGAY_CON_LAI"].notna()
-                    & (fefo_tool_priority["SO_NGAY_CON_LAI"] <= 30)
-                ].copy()
-                if not near_df.empty:
-                    st.warning("Có dụng cụ cận date (<= 30 ngày). Hệ thống đã ưu tiên hiển thị trước.")
-                    near_df["MỨC CẢNH BÁO"] = near_df["SO_NGAY_CON_LAI"].apply(
-                        lambda x: "Hết hạn" if int(x) < 0 else f"Còn {int(x)} ngày"
-                    )
-                    st.dataframe(
-                        near_df[["TEN_DUNG_CU", "MỨC CẢNH BÁO", "TONG_SO_LUONG"]],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-            tool_selected_label = st.selectbox(
-                "Chọn dụng cụ:",
+            selected_take_labels = st.multiselect(
+                "Chọn dụng cụ (có thể chọn nhiều):",
                 options=tool_options,
-                key="fefo_tool_select",
+                key="fefo_tool_multi_take",
             )
-            tool_selected = map_label_to_name.get(tool_selected_label, tool_selected_label)
-            fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
-            selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
-            ton_san_sang = 0
-            if not selected_dm.empty:
-                ton_san_sang = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0), errors="coerce"))
-            if not fefo_df.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
-                fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
-                fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
-                if "HAN_DUNG_DATE" in fefo_df.columns:
-                    fefo_df["__exp"] = pd.to_datetime(fefo_df["HAN_DUNG_DATE"], errors="coerce")
-                else:
-                    fefo_df["__exp"] = fefo_df.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
-                if "NGAY_HAP_DATE" in fefo_df.columns:
-                    fefo_df["__nhap"] = pd.to_datetime(fefo_df["NGAY_HAP_DATE"], errors="coerce")
-                else:
-                    fefo_df["__nhap"] = fefo_df.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
-                fefo_df = stable_sort_dataframe(
-                    fefo_df,
-                    primary_columns=["__exp", "__nhap", "id"],
-                    fallback_name_columns=["TEN_DUNG_CU"],
-                )
-                st.markdown("**Gợi ý FEFO theo hạn dùng**")
-                if not fefo_df.empty:
-                    first_row = fefo_df.iloc[0]
-                    sug_ngay_hap = first_row.get("NGAY_HAP_DATE", first_row.get("NGAY_HAP", ""))
-                    sug_han_dung = first_row.get("HAN_DUNG_DATE", first_row.get("HAN_DUNG", ""))
-                    st.info(f"Ưu tiên dùng lô ngày {sug_ngay_hap} - hết hạn {sug_han_dung}")
-                for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
-                    pri = _fefo_priority_label(idx)
-                    ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
-                    han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
-                    st.caption(
-                        f"{_fefo_priority_badge(pri)} | Ngày hấp: {ngay_hap_show} | "
-                        f"SL: {int(row_b['SO_LUONG'])} | Hạn: {han_dung_show}"
-                    )
-                batch_options = []
-                for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
-                    pri = _fefo_priority_label(idx)
-                    ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
-                    han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
-                    label = (
-                        f"{_fefo_priority_badge(pri)} | Hấp: {ngay_hap_show} | "
-                        f"SL:{int(row_b['SO_LUONG'])} | Hạn:{han_dung_show}"
-                    )
-                    batch_options.append((label, row_b))
-                with st.form("f_lay_v_final", clear_on_submit=True):
-                    nv_l = st.selectbox("Người lấy:", options=danh_sach_ten)
-                    selected_label = st.selectbox("Chọn lô xuất (bắt buộc):", options=[x[0] for x in batch_options])
-                    selected_row = next((r for l, r in batch_options if l == selected_label), None)
-                    max_qty = int(selected_row["SO_LUONG"]) if selected_row is not None else 1
-                    qty_take = st.number_input("Số lượng lấy:", min_value=1, max_value=max_qty, value=1, step=1)
-                    if st.form_submit_button("XÁC NHẬN LẤY"):
-                        if selected_row is None:
-                            st.error("Vui lòng chọn lô cụ thể trước khi lấy.")
+            selected_tools = [map_label_to_name.get(label, label) for label in selected_take_labels]
+
+            if not selected_tools:
+                st.caption("Chọn ít nhất 1 dụng cụ để lấy.")
+            else:
+                with st.form("f_bulk_take_tools", clear_on_submit=False):
+                    nv_l = st.selectbox("Người lấy:", options=danh_sach_ten, key="bulk_take_nv")
+                    bulk_plan: List[Dict[str, Any]] = []
+
+                    for tool_selected in selected_tools:
+                        fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
+                        if fefo_df.empty or not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
+                            st.warning(f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap.")
+                            continue
+
+                        fefo_df = fefo_df.copy()
+                        fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+                        fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
+                        if fefo_df.empty:
+                            st.warning(f"⚠️ `{tool_selected}` không còn số lượng khả dụng theo lô.")
+                            continue
+
+                        if "HAN_DUNG_DATE" in fefo_df.columns:
+                            fefo_df["__exp"] = pd.to_datetime(fefo_df["HAN_DUNG_DATE"], errors="coerce")
                         else:
-                            batch_id = int(selected_row.get("id", selected_row.get("ID")))
-                            ngay_hap = _parse_date_safe(
-                                selected_row.get("NGAY_HAP_DATE", selected_row.get("NGAY_HAP", ""))
+                            fefo_df["__exp"] = fefo_df.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+                        if "NGAY_HAP_DATE" in fefo_df.columns:
+                            fefo_df["__nhap"] = pd.to_datetime(fefo_df["NGAY_HAP_DATE"], errors="coerce")
+                        else:
+                            fefo_df["__nhap"] = fefo_df.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+                        fefo_df = stable_sort_dataframe(
+                            fefo_df,
+                            primary_columns=["__exp", "__nhap", "id"],
+                            fallback_name_columns=["TEN_DUNG_CU"],
+                        )
+
+                        st.markdown(f"**{tool_selected} — gợi ý FEFO theo hạn dùng**")
+                        first_row = fefo_df.iloc[0]
+                        sug_ngay_hap = first_row.get("NGAY_HAP_DATE", first_row.get("NGAY_HAP", ""))
+                        sug_han_dung = first_row.get("HAN_DUNG_DATE", first_row.get("HAN_DUNG", ""))
+                        st.info(f"Ưu tiên dùng lô ngày {sug_ngay_hap} - hết hạn {sug_han_dung}")
+
+                        batch_options: List[tuple[str, pd.Series]] = []
+                        for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
+                            pri = _fefo_priority_label(idx)
+                            ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
+                            han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
+                            label = (
+                                f"{_fefo_priority_badge(pri)} | Hấp: {ngay_hap_show} | "
+                                f"SL:{int(row_b['SO_LUONG'])} | Hạn:{han_dung_show}"
                             )
-                            if deduct_batch(batch_id, int(qty_take)):
+                            batch_options.append((label, row_b))
+
+                        selected_label = st.selectbox(
+                            f"Chọn lô xuất cho `{tool_selected}`:",
+                            options=[x[0] for x in batch_options],
+                            key=f"bulk_batch_{tool_selected}",
+                        )
+                        selected_row = next((r for l, r in batch_options if l == selected_label), None)
+                        max_qty = int(selected_row["SO_LUONG"]) if selected_row is not None else 1
+                        qty_take = st.number_input(
+                            f"Số lượng lấy `{tool_selected}`:",
+                            min_value=1,
+                            max_value=max_qty,
+                            value=1,
+                            step=1,
+                            key=f"bulk_qty_{tool_selected}",
+                        )
+                        bulk_plan.append(
+                            {
+                                "tool_name": tool_selected,
+                                "row": selected_row,
+                                "qty": int(qty_take),
+                            }
+                        )
+
+                    if st.form_submit_button("XÁC NHẬN LẤY TẤT CẢ"):
+                        if not bulk_plan:
+                            st.error("Không có mục nào hợp lệ để lấy.")
+                        else:
+                            any_failed = False
+                            for item in bulk_plan:
+                                tool_selected = item["tool_name"]
+                                selected_row = item["row"]
+                                qty_take = int(item["qty"])
+                                if selected_row is None:
+                                    any_failed = True
+                                    st.error(f"Thiếu thông tin lô cho `{tool_selected}`.")
+                                    continue
+                                batch_id = int(selected_row.get("id", selected_row.get("ID")))
+                                ngay_hap = _parse_date_safe(
+                                    selected_row.get("NGAY_HAP_DATE", selected_row.get("NGAY_HAP", ""))
+                                )
+                                if not deduct_batch(batch_id, int(qty_take)):
+                                    any_failed = True
+                                    st.error(f"Không thể trừ lô đã chọn của `{tool_selected}`.")
+                                    continue
+
                                 log_usage(tool_selected, ngay_hap, int(qty_take), nv_l)
                                 ghi_du_lieu_supabase(
                                     "kho_nhatky",
@@ -802,22 +824,42 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                         }
                                     ],
                                 )
-                                r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected].iloc[0].to_dict()
+
+                                selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
+                                if selected_dm.empty:
+                                    any_failed = True
+                                    st.error(f"Không tìm thấy `{tool_selected}` trong kho_danhmuc để trừ tồn.")
+                                    continue
+                                r_dm = selected_dm.iloc[0].to_dict()
                                 d_id = r_dm.get("id", r_dm.get("ID"))
+                                if d_id is None:
+                                    any_failed = True
+                                    st.error(f"Không tìm thấy ID của `{tool_selected}` trong kho_danhmuc.")
+                                    continue
+                                cur_ton = int(pd.to_numeric(r_dm.get("TỒN SẴN SÀNG", 0), errors="coerce"))
                                 ghi_du_lieu_supabase(
                                     "kho_danhmuc",
-                                    [{"id": int(d_id), "TỒN SẴN SÀNG": int(r_dm["TỒN SẴN SÀNG"]) - int(qty_take)}],
+                                    [{"id": int(d_id), "TỒN SẴN SÀNG": max(0, cur_ton - int(qty_take))}],
                                 )
+
+                            if not any_failed:
                                 st.rerun()
-                            else:
-                                st.error("Không thể trừ lô đã chọn. Vui lòng kiểm tra dữ liệu kho_lo_hap.")
-            else:
-                st.warning("Chưa có lô ready trong kho_lo_hap cho dụng cụ này.")
             with st.expander("Chế độ khẩn: Bỏ qua lô hấp", expanded=False):
                 st.caption(
                     "Dùng khi dữ liệu lô hấp bị thiếu/sai. Hệ thống vẫn trừ tồn và ghi nhật ký, "
                     "nhưng sẽ không trừ theo lô FEFO."
                 )
+                tool_selected_label = st.selectbox(
+                    "Chọn dụng cụ (khẩn):",
+                    options=tool_options,
+                    key="fefo_tool_select_emergency",
+                )
+                tool_selected = map_label_to_name.get(tool_selected_label, tool_selected_label)
+                selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
+                ton_san_sang = 0
+                if not selected_dm.empty:
+                    ton_san_sang = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0), errors="coerce"))
+
                 if ton_san_sang <= 0:
                     st.info("Không thể xuất khẩn vì tồn sẵn sàng hiện tại bằng 0.")
                 else:

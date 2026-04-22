@@ -14,13 +14,20 @@ from services.supabase import get_user_by_token   # ✅ thêm import
 st.set_page_config(page_title="QUẢN LÝ Y CỤ LẦU 2", layout="wide")
 init_session_state()
 
+def _get_remember_token_from_session() -> str:
+    # Backward-compat: chấp nhận cả key cũ viết hoa
+    token = st.session_state.get("remember_token") or st.session_state.get("REMEMBER_TOKEN")
+    return str(token or "").strip()
+
 # ✅ kiểm tra token remember me trước
-if "remember_token" in st.session_state and not st.session_state.get("logged_in", False):
-    user = get_user_by_token(st.session_state["remember_token"])
+remember_token = _get_remember_token_from_session()
+if remember_token and not st.session_state.get("logged_in", False):
+    user = get_user_by_token(remember_token)
     if user:
         st.session_state["logged_in"] = True
         st.session_state["ho_ten"] = user["HỌ VÀ TÊN"]
         st.session_state["user_role"] = str(user["ROLE"]).upper()
+        st.session_state["remember_token"] = remember_token
 
 # ✅ nếu chưa đăng nhập thì gọi login
 if not st.session_state.get("logged_in", False):
@@ -39,7 +46,8 @@ with st.sidebar:
     st.info(f"🔑 Quyền: **{st.session_state['user_role']}**")
     if st.button("Đăng xuất", use_container_width=True):
         st.session_state["logged_in"] = False
-        st.session_state.pop("remember_token", None)  # ✅ xoá token khi logout
+        st.session_state.pop("remember_token", None)
+        st.session_state.pop("REMEMBER_TOKEN", None)
         st.rerun()
 
 st.sidebar.title("🏥 QUẢN LÝ TỔ Y CỤ")
