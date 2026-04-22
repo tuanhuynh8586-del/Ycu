@@ -1126,7 +1126,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             }
                         )
 
-                if st.form_submit_button("🚀 XÁC NHẬN NHẬN VỀ (THEO NGÀY ĐÃ CHỌN)"):
+                if st.form_submit_button("🚀 XÁC NHẬN NHẬN VỀ (THEO NGÀY ĐÃ CHỌN)", use_container_width=True):
                     to_process = [x for x in recv_rows if int(x["qty"]) > 0]
                     if not to_process:
                         st.warning("Bạn chưa nhập số lượng nhận về cho dụng cụ nào.")
