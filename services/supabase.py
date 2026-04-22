@@ -329,8 +329,9 @@ def log_usage(
 # Remember Me functions
 # =========================
 def update_remember_token(username: str, token: str):
+    # Bạn đổi tên cột thành viết hoa ở đây
     supabase.table("nhansu_2026") \
-        .update({"remember_token": token}) \
+        .update({"REMEMBER_TOKEN": token}) \
         .eq("USERNAME", username) \
         .execute()
 
@@ -342,4 +343,5 @@ def get_user_by_token(token: str):
     if result.data:
         return result.data[0]
     return None
-
+result = supabase.table("nhansu_2026").update({"REMEMBER_TOKEN": token}).eq("USERNAME", username).execute()
+print(result)
