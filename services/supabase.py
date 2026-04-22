@@ -7,12 +7,9 @@ import streamlit as st
 
 from utils.constants import SUPABASE_DEBUG_INFO, SUPABASE_KEY, SUPABASE_URL
 from utils.data_helpers import normalize_columns
-from supabase import create_client
-import os
-# Lấy URL và KEY từ file .env
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
-supabase = create_client(url, key)
+
+# Ghi chú: dự án đã dùng PostgREST (requests) qua `SUPABASE_URL`/`SUPABASE_KEY`.
+# Tránh khởi tạo supabase-py client ở mức module (dễ lỗi khi env/secret thiếu).
 
 def _supabase_config_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
@@ -328,20 +325,42 @@ def log_usage(
 # =========================
 # Remember Me functions
 # =========================
-def cap_nhat_token(username, token):
-    # Dùng biến username và token được truyền vào từ hàm
-    return supabase.table("nhansu_2026") \
-        .update({"REMEMBER_TOKEN": token}) \
-        .eq("USERNAME", username) \
-        .execute()
-
-
+def update_remember_token(username: str, token: str):
+    """Cập nhật token remember me cho user"""
+    if not _supabase_config_ready():
+        _notify_missing_config_once()
+        return False
+    user_login = str(username or "").strip()
+    if not user_login:
+        return False
+    session = get_http_session()
+    # Patch theo USERNAME (PostgREST filter)
+    resp = session.patch(
+        f"{SUPABASE_URL}nhansu_2026?USERNAME=eq.{user_login}",
+        json={"REMEMBER_TOKEN": str(token or "")},
+        headers={"Prefer": "return=minimal"},
+        timeout=20,
+    )
+    if resp.status_code in (200, 204):
+        invalidate_data_cache()
+        return True
+    st.error(f"Lỗi update remember token: {resp.text}")
+    return False
 
 def get_user_by_token(token: str):
     """Lấy thông tin user từ token"""
-    result = supabase.table("nhansu_2026").select("*").eq("REMEMBER_TOKEN", token).execute()
-    if result.data:
-        return result.data[0]
-    return None
-result = supabase.table("nhansu_2026").update({"REMEMBER_TOKEN": token}).eq("USERNAME", username).execute()
-print(result)
+    t = str(token or "").strip()
+    if not t:
+        return None
+    df = lay_du_lieu_supabase(
+        "nhansu_2026",
+        query_params={
+            "select": "*",
+            "REMEMBER_TOKEN": f"eq.{t}",
+            "limit": 1,
+        },
+    )
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
