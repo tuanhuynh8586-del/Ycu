@@ -292,13 +292,12 @@ def log_usage(
     now_ts = datetime.now()
     payload = [
         {
-            "TEN_DUNG_CU": str(ten_dung_cu),
-            "NGAY_HAP": ngay_hap.strftime("%d/%m/%Y") if ngay_hap else "",
-            "NGAY_HAP_DATE": ngay_hap.isoformat() if ngay_hap else None,
-            "SO_LUONG": int(so_luong),
-            "NGUOI_LAY": str(nguoi_lay),
-            "THOI_DIEM_XUAT": now_ts.strftime("%d/%m/%Y %H:%M:%S"),
-            "THOI_DIEM_XUAT_TS": now_ts.isoformat(sep=" ", timespec="seconds"),
+            "ten_dung_cu": str(ten_dung_cu),
+            "ngay_hap": ngay_hap.strftime("%Y-%m-%d") if ngay_hap else None,
+            "ngay_hap_dat": ngay_hap.isoformat() if ngay_hap else None,
+            "so_luong": int(so_luong),
+            "nguoi_lay": str(nguoi_lay),
+            "thoi_diem_xuat_ts": now_ts.isoformat(sep=" ", timespec="seconds"),
         }
     ]
     return ghi_du_lieu_supabase("kho_xuat_log", payload)

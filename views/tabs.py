@@ -8,7 +8,6 @@ import pandas as pd
 
 from services.supabase import (
     deduct_batch,
-    get_fefo_batches,
     ghi_du_lieu_supabase,
     insert_batch,
     lay_du_lieu_supabase,
@@ -582,6 +581,73 @@ def _normalize_batch_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out.rename(columns=rename_map)
 
 
+def _build_fefo_tool_priority(df_batches: pd.DataFrame) -> pd.DataFrame:
+    if df_batches.empty:
+        return pd.DataFrame()
+    work = _normalize_batch_columns(df_batches).copy()
+    if not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(work.columns):
+        return pd.DataFrame()
+    work["SO_LUONG"] = pd.to_numeric(work["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+    work = work[work["SO_LUONG"] > 0].copy()
+    if work.empty:
+        return pd.DataFrame()
+    if "TRANG_THAI" in work.columns:
+        work = work[work["TRANG_THAI"].astype(str).str.lower() == "ready"].copy()
+    if work.empty:
+        return pd.DataFrame()
+    if "HAN_DUNG_DATE" in work.columns:
+        work["__exp"] = pd.to_datetime(work["HAN_DUNG_DATE"], errors="coerce")
+    else:
+        work["__exp"] = work.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+    if "NGAY_HAP_DATE" in work.columns:
+        work["__nhap"] = pd.to_datetime(work["NGAY_HAP_DATE"], errors="coerce")
+    else:
+        work["__nhap"] = work.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+    work = stable_sort_dataframe(
+        work,
+        primary_columns=["__exp", "__nhap", "id"],
+        fallback_name_columns=["TEN_DUNG_CU"],
+    )
+    summary = (
+        work.groupby("TEN_DUNG_CU", as_index=False)
+        .agg(
+            SO_LO=("TEN_DUNG_CU", "count"),
+            TONG_SO_LUONG=("SO_LUONG", "sum"),
+            HAN_GAN_NHAT=("__exp", "min"),
+        )
+        .sort_values(by=["HAN_GAN_NHAT", "TEN_DUNG_CU"], kind="stable", na_position="last")
+    )
+    today = pd.Timestamp(datetime.now().date())
+    summary["SO_NGAY_CON_LAI"] = (summary["HAN_GAN_NHAT"] - today).dt.days
+    return summary
+
+
+def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd.DataFrame:
+    if df_batches.empty or not str(tool_name).strip():
+        return pd.DataFrame()
+    work = _normalize_batch_columns(df_batches).copy()
+    if not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(work.columns):
+        return pd.DataFrame()
+    if "TRANG_THAI" in work.columns:
+        work = work[work["TRANG_THAI"].astype(str).str.lower() == "ready"]
+    work = work[work["TEN_DUNG_CU"].astype(str) == str(tool_name)].copy()
+    work["SO_LUONG"] = pd.to_numeric(work["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+    work = work[work["SO_LUONG"] > 0].copy()
+    if "HAN_DUNG_DATE" in work.columns:
+        work["__exp"] = pd.to_datetime(work["HAN_DUNG_DATE"], errors="coerce")
+    else:
+        work["__exp"] = work.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+    if "NGAY_HAP_DATE" in work.columns:
+        work["__nhap"] = pd.to_datetime(work["NGAY_HAP_DATE"], errors="coerce")
+    else:
+        work["__nhap"] = work.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+    return stable_sort_dataframe(
+        work,
+        primary_columns=["__exp", "__nhap", "id"],
+        fallback_name_columns=["TEN_DUNG_CU"],
+    )
+
+
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
@@ -628,6 +694,12 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             return
     map_label_to_name = dict(zip(df_dm["LABEL"], df_dm["TÊN BỘ DỤNG CỤ"]))
     tool_options = [str(x) for x in df_dm["LABEL"].tolist() if str(x).strip()]
+    fefo_tool_priority = _build_fefo_tool_priority(df_batches)
+    if not fefo_tool_priority.empty:
+        ordered_names = fefo_tool_priority["TEN_DUNG_CU"].astype(str).tolist()
+        name_to_label = {v: k for k, v in map_label_to_name.items()}
+        priority_labels = [name_to_label[n] for n in ordered_names if n in name_to_label]
+        tool_options = priority_labels + [x for x in tool_options if x not in priority_labels]
 
     t1, t2, t3, t4 = st.tabs(["🚀 LẤY & CHỐT", "📤 GỬI TT", "📥 NHẬN VỀ", "📊 BÁO CÁO"])
 
@@ -635,13 +707,28 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         c1, c2 = st.columns([1.2, 1.8])
         with c1:
             st.subheader("📍 Lấy dụng cụ")
+            if not fefo_tool_priority.empty:
+                near_df = fefo_tool_priority[
+                    fefo_tool_priority["SO_NGAY_CON_LAI"].notna()
+                    & (fefo_tool_priority["SO_NGAY_CON_LAI"] <= 30)
+                ].copy()
+                if not near_df.empty:
+                    st.warning("Có dụng cụ cận date (<= 30 ngày). Hệ thống đã ưu tiên hiển thị trước.")
+                    near_df["MỨC CẢNH BÁO"] = near_df["SO_NGAY_CON_LAI"].apply(
+                        lambda x: "Hết hạn" if int(x) < 0 else f"Còn {int(x)} ngày"
+                    )
+                    st.dataframe(
+                        near_df[["TEN_DUNG_CU", "MỨC CẢNH BÁO", "TONG_SO_LUONG"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
             tool_selected_label = st.selectbox(
                 "Chọn dụng cụ:",
                 options=tool_options,
                 key="fefo_tool_select",
             )
             tool_selected = map_label_to_name.get(tool_selected_label, tool_selected_label)
-            fefo_df = _normalize_batch_columns(get_fefo_batches(tool_selected))
+            fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
             if not fefo_df.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
                 fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
                 fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
