@@ -5,14 +5,14 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from utils.constants import SUPABASE_DEBUG_INFO, SUPABASE_KEY, SUPABASE_URL
+from utils.constants import SUPABASE_ANON_KEY, SUPABASE_DEBUG_INFO, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL
 from utils.data_helpers import normalize_columns
 
 # Ghi chú: dự án đã dùng PostgREST (requests) qua `SUPABASE_URL`/`SUPABASE_KEY`.
 # Tránh khởi tạo supabase-py client ở mức module (dễ lỗi khi env/secret thiếu).
 
 def _supabase_config_ready() -> bool:
-    return bool(SUPABASE_URL and SUPABASE_KEY)
+    return bool(SUPABASE_URL and (SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY))
 
 
 def _notify_missing_config_once() -> None:
@@ -38,13 +38,19 @@ def get_http_session() -> requests.Session:
     if not _supabase_config_ready():
         _notify_missing_config_once()
     session = requests.Session()
-    session.headers.update(
-        {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-        }
-    )
+    # Default session dùng anon key (đọc). Nếu không có anon key thì fallback service role.
+    key = SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY
+    session.headers.update({"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    return session
+
+
+def get_write_http_session() -> requests.Session:
+    """Session dùng để ghi (ưu tiên service role để bypass RLS)."""
+    if not _supabase_config_ready():
+        _notify_missing_config_once()
+    session = requests.Session()
+    key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+    session.headers.update({"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     return session
 
 
@@ -118,7 +124,7 @@ def invalidate_data_cache() -> None:
 
 
 def ghi_du_lieu_supabase(table_name: str, list_data: List[Dict[str, Any]]) -> bool:
-    session = get_http_session()
+    session = get_write_http_session()
     try:
         clean_data = [_normalize_row_for_write(item) for item in list_data]
         rows_update = [r for r in clean_data if ("id" in r and r["id"] is not None and str(r["id"]).strip() != "")]
@@ -184,7 +190,7 @@ def ghi_du_lieu_supabase(table_name: str, list_data: List[Dict[str, Any]]) -> bo
 
 
 def xoa_dong_supabase(table_name: str, row_id: int) -> bool:
-    session = get_http_session()
+    session = get_write_http_session()
     try:
         response = session.delete(f"{SUPABASE_URL}{table_name}?id=eq.{row_id}", timeout=20)
         if response.status_code in (200, 204):
