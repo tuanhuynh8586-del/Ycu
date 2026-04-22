@@ -278,10 +278,7 @@ def log_tools_received_with_expiry(rows: List[Dict[str, Any]]) -> bool:
     # Retry theo các biến thể phổ biến để tránh lỗi PGRST204 (schema cache/column mismatch).
     variants: List[List[Dict[str, Any]]] = []
 
-    # 1) Giữ nguyên payload hiện tại.
-    variants.append(rows)
-
-    # 2) Lowercase snake_case (phổ biến nhất nếu schema tạo không quote).
+    # 1) Lowercase snake_case (phổ biến nhất nếu schema tạo không quote).
     v_lower: List[Dict[str, Any]] = []
     for r in rows:
         rr = dict(r)
@@ -299,6 +296,9 @@ def log_tools_received_with_expiry(rows: List[Dict[str, Any]]) -> bool:
                 rr[dst] = rr.pop(src)
         v_lower.append(rr)
     variants.append(v_lower)
+
+    # 2) Giữ nguyên payload hiện tại (schema dùng cột HOA/quoted).
+    variants.append(rows)
 
     # 3) Vietnamese columns (một số kho dùng cột VN).
     v_vn: List[Dict[str, Any]] = []
