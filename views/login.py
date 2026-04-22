@@ -7,8 +7,18 @@ def login() -> None:
     st.title("🔑 ĐĂNG NHẬP HỆ THỐNG")
 
     with st.form("login_form"):
-        user_input = st.text_input("Tên đăng nhập (Username)").strip()
-        pass_input = st.text_input("Mật khẩu (Password)", type="password").strip()
+        # Dùng key tường minh để tránh Streamlit tự suy key theo label (dễ phát sinh lỗi lạ trên một số trình duyệt/IME).
+        user_input = st.text_input("Tên đăng nhập (Username)", key="login_username").strip()
+        pass_input_raw = st.text_input("Mật khẩu (Password)", type="password", key="login_password")
+        pass_input = str(pass_input_raw or "").strip()
+
+        # Workaround: một số trình duyệt/IME (đặc biệt mobile) có thể trả về chuỗi dạng escape như "\x31".
+        # Nếu người dùng thực sự gõ ký tự '1' mà bị biến thành "\x31" thì chuyển ngược lại.
+        if len(pass_input) == 4 and pass_input.startswith("\\x"):
+            try:
+                pass_input = chr(int(pass_input[2:], 16))
+            except Exception:
+                pass_input = str(pass_input_raw or "").strip()
         remember_me = st.checkbox("Duy trì đăng nhập")
         submit = st.form_submit_button("Đăng nhập")
 

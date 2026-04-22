@@ -770,96 +770,60 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         sug_han_dung = first_row.get("HAN_DUNG_DATE", first_row.get("HAN_DUNG", ""))
                         st.info(f"Ưu tiên dùng lô ngày {sug_ngay_hap} - hết hạn {sug_han_dung}")
 
-                        batch_options: List[tuple[str, pd.Series]] = []
-                        for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
-                            pri = _fefo_priority_label(idx)
-                            ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
-                            han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
-                            label = (
-                                f"{_fefo_priority_badge(pri)} | Hấp: {ngay_hap_show} | "
-                                f"SL:{int(row_b['SO_LUONG'])} | Hạn:{han_dung_show}"
-                            )
-                            batch_options.append((label, row_b))
-
-                        selected_label = st.selectbox(
-                            f"Chọn lô xuất cho `{tool_selected}`:",
-                            options=[x[0] for x in batch_options],
-                            key=f"bulk_batch_{tool_selected}",
-                        )
-                        selected_row = next((r for l, r in batch_options if l == selected_label), None)
-                        max_qty = int(selected_row["SO_LUONG"]) if selected_row is not None else 1
+                        # --- SỬA TỐI THIỂU: BỎ CHỌN LÔ, THAY BẰNG NHẬP SỐ LƯỢNG ---
                         qty_take = st.number_input(
                             f"Số lượng lấy `{tool_selected}`:",
                             min_value=1,
-                            max_value=max_qty,
                             value=1,
                             step=1,
                             key=f"bulk_qty_{tool_selected}",
                         )
-                        bulk_plan.append(
-                            {
-                                "tool_name": tool_selected,
-                                "row": selected_row,
-                                "qty": int(qty_take),
-                            }
-                        )
+                        # Lưu cả df lô đã sắp xếp vào bulk_plan để dùng lúc Submit
+                        bulk_plan.append({
+                            "tool_name": tool_selected,
+                            "fefo_df": fefo_df, 
+                            "qty": int(qty_take),
+                        })
+                        # --- HẾT PHẦN SỬA ---
 
+                    
                     if st.form_submit_button("XÁC NHẬN LẤY TẤT CẢ"):
                         if not bulk_plan:
-                            st.error("Không có mục nào hợp lệ để lấy.")
+                            st.error("Không có mục nào hợp lệ.")
                         else:
-                            any_failed = False
                             for item in bulk_plan:
                                 tool_selected = item["tool_name"]
-                                selected_row = item["row"]
-                                qty_take = int(item["qty"])
-                                if selected_row is None:
-                                    any_failed = True
-                                    st.error(f"Thiếu thông tin lô cho `{tool_selected}`.")
-                                    continue
-                                batch_id = int(selected_row.get("id", selected_row.get("ID")))
-                                ngay_hap = _parse_date_safe(
-                                    selected_row.get("NGAY_HAP_DATE", selected_row.get("NGAY_HAP", ""))
-                                )
-                                if not deduct_batch(batch_id, int(qty_take)):
-                                    any_failed = True
-                                    st.error(f"Không thể trừ lô đã chọn của `{tool_selected}`.")
-                                    continue
-
-                                log_usage(tool_selected, ngay_hap, int(qty_take), nv_l)
-                                ghi_du_lieu_supabase(
-                                    "kho_nhatky",
-                                    [
-                                        {
-                                            "NGÀY GIỜ": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                                            "NHÂN VIÊN": nv_l,
-                                            "HÀNH ĐỘNG": "LẤY",
-                                            "TÊN BỘ DỤNG CỤ": tool_selected,
-                                            "SỐ LƯỢNG": int(qty_take),
-                                            "TÌNH TRẠNG": "Đang giữ",
-                                        }
-                                    ],
-                                )
-
-                                selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
-                                if selected_dm.empty:
-                                    any_failed = True
-                                    st.error(f"Không tìm thấy `{tool_selected}` trong kho_danhmuc để trừ tồn.")
-                                    continue
-                                r_dm = selected_dm.iloc[0].to_dict()
-                                d_id = r_dm.get("id", r_dm.get("ID"))
-                                if d_id is None:
-                                    any_failed = True
-                                    st.error(f"Không tìm thấy ID của `{tool_selected}` trong kho_danhmuc.")
-                                    continue
-                                cur_ton = int(pd.to_numeric(r_dm.get("TỒN SẴN SÀNG", 0), errors="coerce"))
-                                ghi_du_lieu_supabase(
-                                    "kho_danhmuc",
-                                    [{"id": int(d_id), "TỒN SẴN SÀNG": max(0, cur_ton - int(qty_take))}],
-                                )
-
-                            if not any_failed:
-                                st.rerun()
+                                qty_can_lay = item["qty"]
+                                fefo_df = item["fefo_df"]
+                                
+                                # Tự động trừ lô FEFO
+                                for _, row in fefo_df.iterrows():
+                                    if qty_can_lay <= 0: break
+                                    
+                                    batch_id = int(row.get("id", row.get("ID")))
+                                    sl_lo_kha_dung = int(row["SO_LUONG"])
+                                    sl_lay_lo_nay = min(qty_can_lay, sl_lo_kha_dung)
+                                    
+                                    if sl_lay_lo_nay > 0:
+                                        deduct_batch(batch_id, sl_lay_lo_nay)
+                                        qty_can_lay -= sl_lay_lo_nay
+                                
+                                # Ghi log và trừ tồn kho (GIỮ NGUYÊN LOGIC CŨ CỦA ANH)
+                                log_usage(tool_selected, None, item["qty"], nv_l)
+                                ghi_du_lieu_supabase("kho_nhatky", [{
+                                    "NGÀY GIỜ": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                                    "NHÂN VIÊN": nv_l, "HÀNH ĐỘNG": "LẤY",
+                                    "TÊN BỘ DỤNG CỤ": tool_selected, "SỐ LƯỢNG": item["qty"],
+                                    "TÌNH TRẠNG": "Đang giữ"
+                                }])
+                                
+                                selected_dm = df_dm[df_dm["TÊN BỘ DUNG CỤ"] == tool_selected]
+                                if not selected_dm.empty:
+                                    d_id = int(selected_dm.iloc[0].get("id", selected_dm.iloc[0].get("ID")))
+                                    cur_ton = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0)))
+                                    ghi_du_lieu_supabase("kho_danhmuc", [{"id": d_id, "TỒN SẴN SÀNG": max(0, cur_ton - item["qty"])}])
+                            
+                            st.rerun()
             with st.expander("Chế độ khẩn: Bỏ qua lô hấp", expanded=False):
                 st.caption(
                     "Dùng khi dữ liệu lô hấp bị thiếu/sai. Hệ thống vẫn trừ tồn và ghi nhật ký, "
