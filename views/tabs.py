@@ -729,6 +729,10 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             )
             tool_selected = map_label_to_name.get(tool_selected_label, tool_selected_label)
             fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
+            selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
+            ton_san_sang = 0
+            if not selected_dm.empty:
+                ton_san_sang = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0), errors="coerce"))
             if not fefo_df.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
                 fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
                 fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
@@ -809,6 +813,52 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 st.error("Không thể trừ lô đã chọn. Vui lòng kiểm tra dữ liệu kho_lo_hap.")
             else:
                 st.warning("Chưa có lô ready trong kho_lo_hap cho dụng cụ này.")
+            with st.expander("Chế độ khẩn: Bỏ qua lô hấp", expanded=False):
+                st.caption(
+                    "Dùng khi dữ liệu lô hấp bị thiếu/sai. Hệ thống vẫn trừ tồn và ghi nhật ký, "
+                    "nhưng sẽ không trừ theo lô FEFO."
+                )
+                if ton_san_sang <= 0:
+                    st.info("Không thể xuất khẩn vì tồn sẵn sàng hiện tại bằng 0.")
+                else:
+                    with st.form("f_lay_bo_qua_lo", clear_on_submit=True):
+                        nv_l_manual = st.selectbox("Người lấy (khẩn):", options=danh_sach_ten, key="nv_take_manual")
+                        qty_take_manual = st.number_input(
+                            "Số lượng lấy (khẩn):",
+                            min_value=1,
+                            max_value=int(ton_san_sang),
+                            value=1,
+                            step=1,
+                            key="qty_take_manual",
+                        )
+                        if st.form_submit_button("XÁC NHẬN LẤY (BỎ QUA LÔ)"):
+                            r_dm = selected_dm.iloc[0].to_dict() if not selected_dm.empty else {}
+                            d_id = r_dm.get("id", r_dm.get("ID"))
+                            if d_id is None:
+                                st.error("Không tìm thấy ID dụng cụ trong kho_danhmuc.")
+                            else:
+                                ok_log_usage = log_usage(tool_selected, None, int(qty_take_manual), nv_l_manual)
+                                ok_nhatky = ghi_du_lieu_supabase(
+                                    "kho_nhatky",
+                                    [
+                                        {
+                                            "NGÀY GIỜ": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                                            "NHÂN VIÊN": nv_l_manual,
+                                            "HÀNH ĐỘNG": "LẤY (BỎ QUA LÔ)",
+                                            "TÊN BỘ DỤNG CỤ": tool_selected,
+                                            "SỐ LƯỢNG": int(qty_take_manual),
+                                            "TÌNH TRẠNG": "Đang giữ",
+                                        }
+                                    ],
+                                )
+                                ok_dm = ghi_du_lieu_supabase(
+                                    "kho_danhmuc",
+                                    [{"id": int(d_id), "TỒN SẴN SÀNG": int(ton_san_sang) - int(qty_take_manual)}],
+                                )
+                                if ok_log_usage and ok_nhatky and ok_dm:
+                                    st.rerun()
+                                else:
+                                    st.error("Xuất khẩn chưa hoàn tất. Vui lòng kiểm tra kết nối và quyền ghi dữ liệu.")
         with c2:
             st.subheader("📝 Chốt dùng")
             df_sua = df_nk[df_nk["TÌNH TRẠNG"].isin(["Đang giữ", "Chờ đi hấp"])] if not df_nk.empty else pd.DataFrame()
