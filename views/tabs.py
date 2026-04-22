@@ -37,22 +37,42 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
             nhan_vien_off = st.selectbox("Đăng ký nghỉ cho:", [st.session_state["ho_ten"]], disabled=True)
 
         now = datetime.now()
-        songay = calendar.monthrange(now.year, now.month)[1]
-        list_ngay_trong_thang = [f"{i:02d}/{now.month:02d}/{now.year}" for i in range(1, songay + 1)]
+        # Chọn tháng/năm linh hoạt (phù hợp dùng lâu dài, nhiều năm)
+        c_m, c_y = st.columns([1, 1])
+        with c_m:
+            month_selected = st.selectbox(
+                "Tháng:",
+                list(range(1, 13)),
+                index=int(now.month) - 1,
+                key="off_month",
+            )
+        with c_y:
+            year_options = list(range(int(now.year) - 2, int(now.year) + 3))
+            year_selected = st.selectbox(
+                "Năm:",
+                year_options,
+                index=year_options.index(int(now.year)),
+                key="off_year",
+            )
+
+        songay = calendar.monthrange(int(year_selected), int(month_selected))[1]
+        list_ngay_trong_thang = [f"{i:02d}/{int(month_selected):02d}/{int(year_selected)}" for i in range(1, songay + 1)]
         ngay_chon_roi_rac = st.multiselect(
             "Bấm để chọn các ngày nghỉ (ví dụ: 01, 03, 06...):",
             list_ngay_trong_thang,
+            key=f"ms_off_days_{month_selected:02d}_{year_selected}",
         )
         if ngay_chon_roi_rac:
             st.write("📌 **Thiết lập loại nghỉ cho từng ngày:**")
             loai_nghi_dict: Dict[str, str] = {}
-            cols = st.columns(3)
+            # Mobile-friendly: 2 cột thay vì 3 để khỏi bị chật màn hình
+            cols = st.columns(2)
             for idx, ngay_str in enumerate(ngay_chon_roi_rac):
-                with cols[idx % 3]:
+                with cols[idx % 2]:
                     loai_nghi_dict[ngay_str] = st.selectbox(
                         f"Ngày {ngay_str}:",
                         ["Off", "Phép", "1/2 Sáng", "1/2 Chiều"],
-                        key=f"sel_{ngay_str}",
+                        key=f"sel_{ngay_str}_{nhan_vien_off}",
                     )
             ghi_chu_off = st.text_input("Ghi chú chung:")
             if st.button("🚀 XÁC NHẬN GỬI TẤT CẢ", use_container_width=True):
@@ -92,7 +112,7 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
                         st.error("Tất cả ngày đã chọn đều đã tồn tại!")
 
     with col_view:
-        st.subheader("🔍 Theo dõi lịch nghỉ tháng này")
+        st.subheader("🔍 Theo dõi lịch nghỉ theo tháng")
         df_off_raw = lay_du_lieu_supabase("dangkyoff_log")
         if df_off_raw.empty:
             st.info("Chưa có dữ liệu.")
@@ -106,10 +126,12 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
             else:
                 c_l, c_n, c_t = col_ly_do[0], col_ngay[0], col_ten[0]
                 df_off_raw["DT"] = pd.to_datetime(df_off_raw[c_n], format="%d/%m/%Y", errors="coerce")
-                thang_hien_tai = datetime.now().month
-                df_month = df_off_raw[df_off_raw["DT"].dt.month == thang_hien_tai].copy()
+                # Bám theo tháng/năm đang chọn ở khung đăng ký để xem đúng dữ liệu
+                df_month = df_off_raw[
+                    (df_off_raw["DT"].dt.month == int(month_selected)) & (df_off_raw["DT"].dt.year == int(year_selected))
+                ].copy()
                 if df_month.empty:
-                    st.info("Tháng này chưa có ai đăng ký.")
+                    st.info("Tháng đang chọn chưa có ai đăng ký.")
                 else:
                     df_month = stable_sort_dataframe(df_month, primary_columns=["DT"], fallback_name_columns=[c_t, c_l])
                     summary = df_month.groupby(c_n, sort=False).agg({c_t: list, c_l: list}).reset_index()
