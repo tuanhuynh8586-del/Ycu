@@ -1,13 +1,19 @@
 import calendar
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-from services.supabase import ghi_du_lieu_supabase, lay_du_lieu_supabase, xoa_dong_supabase
-from utils.constants import CONG_VIEC_LIST, LIST_THANG, PHONG_LIST
+from services.supabase import (
+    ghi_du_lieu_supabase,
+    lay_du_lieu_supabase,
+    log_tools_received_with_expiry,
+    log_tools_sent_for_sterilization,
+    xoa_dong_supabase,
+)
+from utils.constants import CONG_VIEC_LIST, KHO_EXPIRY_DAYS, LIST_THANG, PHONG_LIST
 from utils.data_helpers import get_fixed_order_list, stable_sort_dataframe
 
 
@@ -409,6 +415,18 @@ def _normalize_kho_columns(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _parse_datetime_safe(value: Any) -> pd.Timestamp:
+    if value is None or str(value).strip() == "":
+        return pd.NaT
+    val = str(value).strip()
+    parsed = pd.to_datetime(val, format="%d/%m/%Y %H:%M:%S", errors="coerce")
+    if pd.isna(parsed):
+        parsed = pd.to_datetime(val, format="%d/%m/%Y", errors="coerce")
+    if pd.isna(parsed):
+        parsed = pd.to_datetime(val, errors="coerce")
+    return parsed
+
+
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
@@ -424,6 +442,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX"],
         fallback_name_columns=["TÊN BỘ DỤNG CỤ"],
     )
+    df_gui_hap_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_gui_hap_log"))
+    df_nhan_ve_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_nhan_ve_log"))
 
     df_holding = df_nk[df_nk["TÌNH TRẠNG"] == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
 
@@ -505,6 +525,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         c_date, _ = st.columns([1, 2])
         ngay_gui = c_date.date_input("Ngày gửi:", value=datetime.now())
         cho_g = df_nk[df_nk["TÌNH TRẠNG"] == "Chờ đi hấp"] if not df_nk.empty else pd.DataFrame()
+        cho_g = stable_sort_dataframe(
+            cho_g,
+            primary_columns=["NGÀY GIỜ", "id"],
+            fallback_name_columns=["TÊN BỘ DỤNG CỤ", "NHÂN VIÊN"],
+        )
         st.write("---")
         st.write("➕ **Gửi thêm đồ khác**")
         col_m, col_s, col_b_a = st.columns([2, 1, 1])
@@ -536,6 +561,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             st.dataframe(cho_g[["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"]], use_container_width=True)
             if st.button("🚀 XÁC NHẬN GỬI TOÀN BỘ"):
                 ds_sum = cho_g.groupby("TÊN BỘ DỤNG CỤ")["SỐ LƯỢNG"].sum().reset_index()
+                time_sent = datetime.now()
+                sent_rows: List[Dict[str, Any]] = []
                 for _, row in ds_sum.iterrows():
                     r_dm_u = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == row["TÊN BỘ DỤNG CỤ"]].iloc[0].to_dict()
                     id_u = r_dm_u.get("id", r_dm_u.get("ID"))
@@ -549,6 +576,13 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             }
                         ],
                     )
+                    sent_rows.append(
+                        {
+                            "TOOL_NAME": row["TÊN BỘ DỤNG CỤ"],
+                            "QUANTITY_SENT": int(row["SỐ LƯỢNG"]),
+                            "TIMESTAMP_SENT": time_sent.strftime("%d/%m/%Y %H:%M:%S"),
+                        }
+                    )
                 for _, r_nk in cho_g.iterrows():
                     ghi_du_lieu_supabase(
                         "kho_nhatky",
@@ -559,16 +593,39 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             }
                         ],
                     )
+                if not log_tools_sent_for_sterilization(sent_rows):
+                    st.warning("Đã gửi đi hấp nhưng chưa ghi được log kho_gui_hap_log.")
                 st.success("Đã gửi đi!")
                 st.rerun()
+        st.markdown("### Lịch sử gửi hấp")
+        if df_gui_hap_log.empty:
+            st.caption("Chưa có dữ liệu kho_gui_hap_log.")
+        else:
+            if "TIMESTAMP_SENT" in df_gui_hap_log.columns:
+                df_gui_hap_log["__ts"] = df_gui_hap_log["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
+            elif "NGÀY GIỜ" in df_gui_hap_log.columns:
+                df_gui_hap_log["__ts"] = df_gui_hap_log["NGÀY GIỜ"].apply(_parse_datetime_safe)
+            else:
+                df_gui_hap_log["__ts"] = pd.NaT
+            df_gui_hap_log = stable_sort_dataframe(
+                df_gui_hap_log,
+                primary_columns=["__ts", "ORDER_INDEX", "id"],
+                fallback_name_columns=["TOOL_NAME", "TÊN BỘ DỤNG CỤ"],
+            )
+            show_cols = [c for c in ["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"] if c in df_gui_hap_log.columns]
+            if not show_cols:
+                show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG", "NGÀY GIỜ"] if c in df_gui_hap_log.columns]
+            st.dataframe(df_gui_hap_log[show_cols], use_container_width=True, hide_index=True)
 
     with t3:
         st.subheader("📥 Nhận về kho")
         m_v = st.selectbox("Bộ dụng cụ nhận về:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="n_v")
         s_v = st.number_input("Số lượng thực nhận:", 1, 100, 1, key="s_n")
+        ngay_nhan = st.date_input("Ngày nhận:", value=datetime.now(), key="ngay_nhan_kho")
         if st.button("XÁC NHẬN NHẬN"):
             r_dm_n = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_v].iloc[0].to_dict()
             id_n = r_dm_n.get("id", r_dm_n.get("ID"))
+            ngay_het_han = ngay_nhan + timedelta(days=KHO_EXPIRY_DAYS)
             ghi_du_lieu_supabase(
                 "kho_danhmuc",
                 [
@@ -580,8 +637,43 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     }
                 ],
             )
+            log_tools_received_with_expiry(
+                [
+                    {
+                        "TOOL_NAME": m_v,
+                        "QUANTITY": int(s_v),
+                        "DATE_RECEIVED": ngay_nhan.strftime("%d/%m/%Y"),
+                        "EXPIRY_DATE": ngay_het_han.strftime("%d/%m/%Y"),
+                    }
+                ]
+            )
             st.rerun()
 
     with t4:
         st.subheader("📊 Báo cáo kho")
+        st.caption("Ưu tiên sử dụng theo FEFO (hạn gần nhất trước).")
+        if not df_nhan_ve_log.empty and {"TOOL_NAME", "QUANTITY", "EXPIRY_DATE"}.issubset(df_nhan_ve_log.columns):
+            df_nhan_ve_log["__exp"] = df_nhan_ve_log["EXPIRY_DATE"].apply(_parse_datetime_safe)
+            df_nhan_ve_log["QUANTITY"] = pd.to_numeric(df_nhan_ve_log["QUANTITY"], errors="coerce").fillna(0).astype(int)
+            df_fifo = stable_sort_dataframe(
+                df_nhan_ve_log,
+                primary_columns=["__exp", "DATE_RECEIVED", "id"],
+                fallback_name_columns=["TOOL_NAME"],
+            )
+            today = pd.Timestamp(datetime.now().date())
+            near_threshold = today + pd.Timedelta(days=3)
+            df_fifo["CẢNH BÁO"] = df_fifo["__exp"].apply(
+                lambda d: "⚠️ Sắp hết hạn" if pd.notna(d) and d <= near_threshold else ""
+            )
+            st.dataframe(
+                df_fifo[["TOOL_NAME", "QUANTITY", "DATE_RECEIVED", "EXPIRY_DATE", "CẢNH BÁO"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+            if not df_fifo.empty:
+                first_tool = df_fifo.iloc[0]["TOOL_NAME"]
+                first_exp = df_fifo.iloc[0]["EXPIRY_DATE"]
+                st.info(f"Gợi ý xuất trước: **{first_tool}** (hạn: {first_exp}).")
+        else:
+            st.caption("Chưa có dữ liệu FEFO từ kho_nhan_ve_log.")
         st.dataframe(df_dm[[c for c in df_dm.columns if c != "LABEL"]], use_container_width=True)

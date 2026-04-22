@@ -23,6 +23,7 @@ CONG_VIEC_LIST = [
 ]
 
 LIST_THANG = [f"{m:02d}/2026" for m in range(1, 13)]
+KHO_EXPIRY_DAYS = int(os.getenv("KHO_EXPIRY_DAYS", "30"))
 
 
 def _load_local_env_file() -> None:

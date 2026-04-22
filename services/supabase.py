@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -180,3 +180,46 @@ def xoa_dong_supabase(table_name: str, row_id: int) -> bool:
 
 def lay_log_tien_theo_thang(thang_nam: str) -> pd.DataFrame:
     return lay_du_lieu_supabase("tienca_log", query_params={"THÁNG": thang_nam})
+
+
+def get_user_by_username(username: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    user_login = str(username or "").strip().lower()
+    if not user_login:
+        return None, "Vui lòng nhập tên đăng nhập."
+    df_user = lay_du_lieu_supabase("nhansu_2026")
+    if df_user.empty:
+        return None, "Không tìm thấy dữ liệu nhân sự trên hệ thống!"
+    match = df_user[
+        (df_user["USERNAME"].astype(str).str.lower() == user_login)
+        & (df_user["TRẠNG THÁI"].astype(str).str.upper() != "NGHỈ LÀM")
+    ]
+    if match.empty:
+        return None, "Không tìm thấy tài khoản hợp lệ."
+    return match.iloc[0].to_dict(), ""
+
+
+def update_user_password(username: str, current_password: str, new_password: str) -> Tuple[bool, str]:
+    user_row, err = get_user_by_username(username)
+    if user_row is None:
+        return False, err
+    if str(user_row.get("PASSWORD", "")) != str(current_password):
+        return False, "Mật khẩu hiện tại không đúng."
+    row_id = user_row.get("id", user_row.get("ID"))
+    if row_id is None or str(row_id).strip() == "":
+        return False, "Không xác định được ID người dùng để cập nhật."
+    ok = ghi_du_lieu_supabase("nhansu_2026", [{"id": int(float(row_id)), "PASSWORD": str(new_password)}])
+    if not ok:
+        return False, "Không thể cập nhật mật khẩu lên Supabase."
+    return True, "Đổi mật khẩu thành công."
+
+
+def log_tools_sent_for_sterilization(rows: List[Dict[str, Any]]) -> bool:
+    if not rows:
+        return True
+    return ghi_du_lieu_supabase("kho_gui_hap_log", rows)
+
+
+def log_tools_received_with_expiry(rows: List[Dict[str, Any]]) -> bool:
+    if not rows:
+        return True
+    return ghi_du_lieu_supabase("kho_nhan_ve_log", rows)
