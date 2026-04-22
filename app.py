@@ -19,8 +19,18 @@ def _get_remember_token_from_session() -> str:
     token = st.session_state.get("remember_token") or st.session_state.get("REMEMBER_TOKEN")
     return str(token or "").strip()
 
+# Ưu tiên token từ session, fallback token từ URL query param (persist qua F5)
+def _get_remember_token_from_url() -> str:
+    try:
+        raw = st.query_params.get("rt", "")
+    except Exception:
+        raw = ""
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    return str(raw or "").strip()
+
 # ✅ kiểm tra token remember me trước
-remember_token = _get_remember_token_from_session()
+remember_token = _get_remember_token_from_session() or _get_remember_token_from_url()
 if remember_token and not st.session_state.get("logged_in", False):
     user = get_user_by_token(remember_token)
     if user:
@@ -28,6 +38,10 @@ if remember_token and not st.session_state.get("logged_in", False):
         st.session_state["ho_ten"] = user["HỌ VÀ TÊN"]
         st.session_state["user_role"] = str(user["ROLE"]).upper()
         st.session_state["remember_token"] = remember_token
+        try:
+            st.query_params["rt"] = remember_token
+        except Exception:
+            pass
 
 # ✅ nếu chưa đăng nhập thì gọi login
 if not st.session_state.get("logged_in", False):
@@ -48,6 +62,10 @@ with st.sidebar:
         st.session_state["logged_in"] = False
         st.session_state.pop("remember_token", None)
         st.session_state.pop("REMEMBER_TOKEN", None)
+        try:
+            st.query_params.pop("rt", None)
+        except Exception:
+            pass
         st.rerun()
 
 st.sidebar.title("🏥 QUẢN LÝ TỔ Y CỤ")

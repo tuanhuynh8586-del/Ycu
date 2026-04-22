@@ -41,11 +41,22 @@ def login() -> None:
         # ✅ Nếu chọn remember me thì tạo token và lưu vào Supabase
         if remember_me:
             token = str(uuid.uuid4()).lower()
-            update_remember_token(user_login, token)
-            # dùng chung key với app.py để auto-login
-            st.session_state["remember_token"] = token
+            ok = update_remember_token(user_login, token)
+            if ok:
+                # dùng chung key với app.py để auto-login + persist qua F5 bằng query param
+                st.session_state["remember_token"] = token
+                try:
+                    st.query_params["rt"] = token
+                except Exception:
+                    pass
+            else:
+                st.warning("Không thể ghi token duy trì đăng nhập lên Supabase. Vui lòng thử lại.")
         else:
             st.session_state.pop("remember_token", None)
+            try:
+                st.query_params.pop("rt", None)
+            except Exception:
+                pass
 
         st.success(f"Chào {st.session_state['ho_ten']}!")
         time.sleep(1)

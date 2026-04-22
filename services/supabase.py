@@ -334,17 +334,25 @@ def update_remember_token(username: str, token: str):
     if not user_login:
         return False
     session = get_http_session()
-    # Patch theo USERNAME (PostgREST filter)
-    resp = session.patch(
-        f"{SUPABASE_URL}nhansu_2026?USERNAME=eq.{user_login}",
-        json={"REMEMBER_TOKEN": str(token or "")},
-        headers={"Prefer": "return=minimal"},
-        timeout=20,
-    )
-    if resp.status_code in (200, 204):
-        invalidate_data_cache()
-        return True
-    st.error(f"Lỗi update remember token: {resp.text}")
+    token_val = str(token or "").strip()
+
+    # Supabase/PostgREST có thể dùng schema cột viết HOA (quoted) hoặc thường (lowercase).
+    # Vì vậy thử lần lượt các biến thể để đảm bảo ghi được.
+    user_cols = ["USERNAME", "username"]
+    token_cols = ["REMEMBER_TOKEN", "remember_token"]
+    for u_col in user_cols:
+        for t_col in token_cols:
+            resp = session.patch(
+                f"{SUPABASE_URL}nhansu_2026?{u_col}=eq.{user_login}",
+                json={t_col: token_val},
+                headers={"Prefer": "return=minimal"},
+                timeout=20,
+            )
+            if resp.status_code in (200, 204):
+                invalidate_data_cache()
+                return True
+
+    st.error("Không thể ghi remember token lên Supabase (không match được cột USERNAME/REMEMBER_TOKEN).")
     return False
 
 def get_user_by_token(token: str):
@@ -352,15 +360,16 @@ def get_user_by_token(token: str):
     t = str(token or "").strip()
     if not t:
         return None
-    df = lay_du_lieu_supabase(
-        "nhansu_2026",
-        query_params={
-            "select": "*",
-            "REMEMBER_TOKEN": f"eq.{t}",
-            "limit": 1,
-        },
-    )
-    if df.empty:
-        return None
-    return df.iloc[0].to_dict()
+    for col in ("REMEMBER_TOKEN", "remember_token"):
+        df = lay_du_lieu_supabase(
+            "nhansu_2026",
+            query_params={
+                "select": "*",
+                col: f"eq.{t}",
+                "limit": 1,
+            },
+        )
+        if not df.empty:
+            return df.iloc[0].to_dict()
+    return None
 
