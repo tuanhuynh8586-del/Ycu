@@ -328,9 +328,9 @@ def log_usage(
 # =========================
 # Remember Me functions
 # =========================
-def update_remember_token(username: str, token: str):
-    # Bạn đổi tên cột thành viết hoa ở đây
-    supabase.table("nhansu_2026") \
+def cap_nhat_token(username, token):
+    # Dùng biến username và token được truyền vào từ hàm
+    return supabase.table("nhansu_2026") \
         .update({"REMEMBER_TOKEN": token}) \
         .eq("USERNAME", username) \
         .execute()
