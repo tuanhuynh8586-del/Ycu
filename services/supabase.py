@@ -330,9 +330,10 @@ def log_usage(
 # =========================
 def update_remember_token(username: str, token: str):
     supabase.table("nhansu_2026") \
-        .update({"REMEMBER_TOKEN": token}) \
+        .update({"remember_token": token}) \
         .eq("USERNAME", username) \
         .execute()
+
 
 
 def get_user_by_token(token: str):
