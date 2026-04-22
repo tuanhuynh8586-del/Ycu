@@ -329,8 +329,11 @@ def log_usage(
 # Remember Me functions
 # =========================
 def update_remember_token(username: str, token: str):
-    """Cập nhật token remember me cho user"""
-    supabase.table("nhansu_2026").update({"REMEMBER_TOKEN": token}).eq("USERNAME", username).execute()
+    supabase.table("nhansu_2026") \
+        .update({"REMEMBER_TOKEN": token}) \
+        .eq("USERNAME", username) \
+        .execute()
+
 
 def get_user_by_token(token: str):
     """Lấy thông tin user từ token"""
