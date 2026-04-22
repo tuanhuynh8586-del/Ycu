@@ -1035,7 +1035,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             else:
                 view_send["__ts"] = pd.NaT
             view_send["__date"] = view_send["__ts"].dt.date
-            view_send = view_send[view_send["__date"] == ngay_gui.date()].copy()
+            # `st.date_input` trả về `datetime.date`
+            view_send = view_send[view_send["__date"] == ngay_gui].copy()
             view_send = stable_sort_dataframe(
                 view_send,
                 primary_columns=["__ts", "ORDER_INDEX", "id"],
@@ -1056,7 +1057,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 view_fb = df_send_fallback.copy()
                 view_fb["__ts"] = view_fb["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
                 view_fb["__date"] = view_fb["__ts"].dt.date
-                view_fb = view_fb[view_fb["__date"] == ngay_gui.date()].copy()
+                # `st.date_input` trả về `datetime.date`
+                view_fb = view_fb[view_fb["__date"] == ngay_gui].copy()
                 if view_fb.empty:
                     st.caption("Không có dữ liệu gửi hấp trong ngày đã chọn.")
                 else:
@@ -1172,7 +1174,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         else:
             view_recv = df_nhan_ve_log.copy()
             view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
-            view_recv = view_recv[view_recv["__d"] == ngay_nhan.date()].copy()
+            # `st.date_input` trả về `datetime.date`
+            view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
             if view_recv.empty:
                 st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
             else:
