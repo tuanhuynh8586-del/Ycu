@@ -1213,15 +1213,50 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
             if fallback_tool_cols:
                 df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[fallback_tool_cols[0]].astype(str)
-        # Theo yêu cầu: chỉ hiển thị tên dụng cụ + cơ số + đang hấp
-        dm_show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "TỒN SẴN SÀNG", "ĐANG HẤP"] if c in df_dm.columns]
-        if dm_show_cols:
-            view_dm = df_dm[dm_show_cols].copy()
-            if "TỒN SẴN SÀNG" in view_dm.columns:
-                view_dm = view_dm.rename(columns={"TỒN SẴN SÀNG": "CƠ SỐ"})
-            st.dataframe(view_dm, use_container_width=True, hide_index=True)
+        # Ưu tiên hiển thị cột CƠ SỐ nếu Supabase đã có sẵn.
+        has_co_so = "CƠ SỐ" in df_dm.columns
+        has_ton_san_sang = "TỒN SẴN SÀNG" in df_dm.columns
+        has_dang_hap = "ĐANG HẤP" in df_dm.columns
+
+        show_4_cols = st.checkbox(
+            "Hiện thêm cột Tồn sẵn sàng (gọn trên điện thoại vẫn xem được)",
+            value=False,
+            key="kho_report_show4",
+        )
+
+        base_cols = ["TÊN BỘ DỤNG CỤ"]
+        if has_co_so:
+            base_cols.append("CƠ SỐ")
+        elif has_ton_san_sang:
+            # fallback nếu bảng chưa có cột CƠ SỐ
+            base_cols.append("TỒN SẴN SÀNG")
+        if has_dang_hap:
+            base_cols.append("ĐANG HẤP")
+
+        if show_4_cols and has_ton_san_sang and "TỒN SẴN SÀNG" not in base_cols:
+            base_cols.insert(2 if len(base_cols) >= 2 else 1, "TỒN SẴN SÀNG")
+
+        base_cols = [c for c in base_cols if c in df_dm.columns]
+        if not base_cols:
+            st.caption("Không tìm thấy cột để hiển thị báo cáo kho.")
         else:
-            st.caption("Không tìm thấy cột cơ số kho để hiển thị.")
+            view_dm = df_dm[base_cols].copy()
+            # Nếu dùng fallback "TỒN SẴN SÀNG" thay cho CƠ SỐ thì đổi nhãn hiển thị cho đúng ý nghĩa
+            if (not has_co_so) and ("TỒN SẴN SÀNG" in view_dm.columns) and (not show_4_cols):
+                view_dm = view_dm.rename(columns={"TỒN SẴN SÀNG": "CƠ SỐ"})
+
+            st.dataframe(
+                view_dm,
+                use_container_width=True,
+                hide_index=True,
+                height=360,
+                column_config={
+                    "TÊN BỘ DỤNG CỤ": st.column_config.TextColumn("DANH MỤC", width="medium"),
+                    "CƠ SỐ": st.column_config.NumberColumn("CƠ SỐ", width="small"),
+                    "TỒN SẴN SÀNG": st.column_config.NumberColumn("TỒN", width="small"),
+                    "ĐANG HẤP": st.column_config.NumberColumn("ĐANG HẤP", width="small"),
+                },
+            )
         st.markdown("---")
         st.markdown("### Báo cáo theo lô hấp")
         st.caption("Báo cáo theo lô hấp (FEFO: hạn gần nhất trước).")
