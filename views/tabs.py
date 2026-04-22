@@ -817,7 +817,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                     "TÌNH TRẠNG": "Đang giữ"
                                 }])
                                 
-                                selected_dm = df_dm[df_dm["TÊN BỘ DUNG CỤ"] == tool_selected]
+                                selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
                                 if not selected_dm.empty:
                                     d_id = int(selected_dm.iloc[0].get("id", selected_dm.iloc[0].get("ID")))
                                     cur_ton = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0)))
