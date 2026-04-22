@@ -37,26 +37,17 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
             nhan_vien_off = st.selectbox("Đăng ký nghỉ cho:", [st.session_state["ho_ten"]], disabled=True)
 
         now = datetime.now()
-        # Chọn tháng/năm linh hoạt (phù hợp dùng lâu dài, nhiều năm)
-        c_m, c_y = st.columns([1, 1])
-        with c_m:
-            month_selected = st.selectbox(
-                "Tháng:",
-                list(range(1, 13)),
-                index=int(now.month) - 1,
-                key="off_month",
-            )
-        with c_y:
-            year_options = list(range(int(now.year) - 2, int(now.year) + 3))
-            year_selected = st.selectbox(
-                "Năm:",
-                year_options,
-                index=year_options.index(int(now.year)),
-                key="off_year",
-            )
+        # Mobile-friendly: chọn 1 ngày trong tháng/năm cần đăng ký (từ đó suy ra tháng/năm)
+        month_anchor = st.date_input(
+            "Chọn tháng/năm cần đăng ký (chọn đại 1 ngày trong tháng):",
+            value=now.date(),
+            key="off_month_anchor",
+        )
+        month_selected = int(month_anchor.month)
+        year_selected = int(month_anchor.year)
 
-        songay = calendar.monthrange(int(year_selected), int(month_selected))[1]
-        list_ngay_trong_thang = [f"{i:02d}/{int(month_selected):02d}/{int(year_selected)}" for i in range(1, songay + 1)]
+        songay = calendar.monthrange(year_selected, month_selected)[1]
+        list_ngay_trong_thang = [f"{i:02d}/{month_selected:02d}/{year_selected}" for i in range(1, songay + 1)]
         ngay_chon_roi_rac = st.multiselect(
             "Bấm để chọn các ngày nghỉ (ví dụ: 01, 03, 06...):",
             list_ngay_trong_thang,
@@ -1219,7 +1210,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
             if fallback_tool_cols:
                 df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[fallback_tool_cols[0]].astype(str)
-        dm_show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "TỒN SẴN SÀNG", "ĐANG HẤP", "GHI CHÚ"] if c in df_dm.columns]
+        # Theo yêu cầu: chỉ hiển thị tên dụng cụ + cơ số + đang hấp
+        dm_show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "TỒN SẴN SÀNG", "ĐANG HẤP"] if c in df_dm.columns]
         if dm_show_cols:
             st.dataframe(df_dm[dm_show_cols], use_container_width=True, hide_index=True)
         else:
