@@ -138,7 +138,14 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
         st.info("Không có dữ liệu để xóa.")
         return
     st.write("📌 Nhập mã ID từ bảng dưới đây để xóa:")
-    st.dataframe(df_del_view.tail(5), use_container_width=True, hide_index=True)
+    df_del_view.columns = [str(c).strip().upper() for c in df_del_view.columns]
+    if "NGÀY NGHỈ" in df_del_view.columns:
+        df_del_view["DT"] = pd.to_datetime(df_del_view["NGÀY NGHỈ"], format="%d/%m/%Y", errors="coerce")
+        df_del_view = df_del_view[
+            (df_del_view["DT"].dt.month == int(month_selected)) & (df_del_view["DT"].dt.year == int(year_selected))
+        ].copy()
+        df_del_view = stable_sort_dataframe(df_del_view, primary_columns=["DT", "id"], fallback_name_columns=["TÊN (ID)"])
+    st.dataframe(df_del_view.tail(10), use_container_width=True, hide_index=True)
     col_del1, col_del2 = st.columns([1, 1])
     with col_del1:
         id_to_delete = st.number_input("Nhập ID cần xóa:", min_value=1, step=1, key="id_del_input")
@@ -708,11 +715,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     map_label_to_name = dict(zip(df_dm["LABEL"], df_dm["TÊN BỘ DỤNG CỤ"]))
     tool_options = [str(x) for x in df_dm["LABEL"].tolist() if str(x).strip()]
     fefo_tool_priority = _build_fefo_tool_priority(df_batches)
-    if not fefo_tool_priority.empty:
-        ordered_names = fefo_tool_priority["TEN_DUNG_CU"].astype(str).tolist()
-        name_to_label = {v: k for k, v in map_label_to_name.items()}
-        priority_labels = [name_to_label[n] for n in ordered_names if n in name_to_label]
-        tool_options = priority_labels + [x for x in tool_options if x not in priority_labels]
+    # Giữ thứ tự theo kho_danhmuc (ổn định), không reorder theo FEFO hay lượt ghi.
 
     t1, t2, t3, t4 = st.tabs(["🚀 LẤY & CHỐT", "📤 GỬI TT", "📥 NHẬN VỀ", "📊 BÁO CÁO"])
 
@@ -1213,7 +1216,10 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         # Theo yêu cầu: chỉ hiển thị tên dụng cụ + cơ số + đang hấp
         dm_show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "TỒN SẴN SÀNG", "ĐANG HẤP"] if c in df_dm.columns]
         if dm_show_cols:
-            st.dataframe(df_dm[dm_show_cols], use_container_width=True, hide_index=True)
+            view_dm = df_dm[dm_show_cols].copy()
+            if "TỒN SẴN SÀNG" in view_dm.columns:
+                view_dm = view_dm.rename(columns={"TỒN SẴN SÀNG": "CƠ SỐ"})
+            st.dataframe(view_dm, use_container_width=True, hide_index=True)
         else:
             st.caption("Không tìm thấy cột cơ số kho để hiển thị.")
         st.markdown("---")
