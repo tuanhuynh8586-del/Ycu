@@ -7,7 +7,12 @@ import streamlit as st
 
 from utils.constants import SUPABASE_DEBUG_INFO, SUPABASE_KEY, SUPABASE_URL
 from utils.data_helpers import normalize_columns
-
+from supabase import create_client
+import os
+# Lấy URL và KEY từ file .env
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
+supabase = create_client(url, key)
 
 def _supabase_config_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
@@ -320,3 +325,17 @@ def log_usage(
         }
     ]
     return ghi_du_lieu_supabase("kho_xuat_log", payload)
+# =========================
+# Remember Me functions
+# =========================
+def update_remember_token(username: str, token: str):
+    """Cập nhật token remember me cho user"""
+    supabase.table("nhansu_2026").update({"REMEMBER_TOKEN": token}).eq("USERNAME", username).execute()
+
+def get_user_by_token(token: str):
+    """Lấy thông tin user từ token"""
+    result = supabase.table("nhansu_2026").select("*").eq("REMEMBER_TOKEN", token).execute()
+    if result.data:
+        return result.data[0]
+    return None
+
