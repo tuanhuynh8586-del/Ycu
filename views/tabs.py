@@ -427,6 +427,98 @@ def _parse_datetime_safe(value: Any) -> pd.Timestamp:
     return parsed
 
 
+def _normalize_fifo_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    out.columns = [str(c).strip().upper() if str(c).strip().lower() != "id" else "id" for c in out.columns]
+    rename_map: Dict[str, str] = {}
+    for col in out.columns:
+        c_up = str(col).upper()
+        if "TOOL_NAME" == c_up or "TÊN BỘ DỤNG CỤ" in c_up:
+            rename_map[col] = "TOOL_NAME"
+        elif c_up in ("QUANTITY", "SỐ LƯỢNG", "SO LUONG"):
+            rename_map[col] = "QUANTITY"
+        elif c_up in ("REMAINING_QTY", "SL_CÒN", "SL CON", "SO LUONG CON", "SO_LUONG_CON"):
+            rename_map[col] = "REMAINING_QTY"
+        elif c_up in ("DATE_RECEIVED", "NGÀY NHẬN", "NGAY NHAN"):
+            rename_map[col] = "DATE_RECEIVED"
+        elif c_up in ("EXPIRY_DATE", "HẠN DÙNG", "HAN DUNG"):
+            rename_map[col] = "EXPIRY_DATE"
+    return out.rename(columns=rename_map)
+
+
+def _build_send_log_from_nhatky(df_nk: pd.DataFrame) -> pd.DataFrame:
+    if df_nk.empty:
+        return pd.DataFrame()
+    src = df_nk.copy()
+    if "TÌNH TRẠNG" not in src.columns:
+        return pd.DataFrame()
+    mask = src["TÌNH TRẠNG"].astype(str).str.contains("Đang hấp", case=False, na=False)
+    src = src[mask].copy()
+    if src.empty:
+        return src
+    src["TIMESTAMP_SENT"] = src.get("NGÀY GIỜ", "").astype(str)
+    src["TOOL_NAME"] = src.get("TÊN BỘ DỤNG CỤ", "").astype(str)
+    src["QUANTITY_SENT"] = pd.to_numeric(src.get("SỐ LƯỢNG", 0), errors="coerce").fillna(0).astype(int)
+    src["__ts"] = src["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
+    return stable_sort_dataframe(
+        src,
+        primary_columns=["__ts", "id"],
+        fallback_name_columns=["TOOL_NAME", "NHÂN VIÊN"],
+    )
+
+
+def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
+    df_fifo = _normalize_fifo_columns(df_fifo_raw)
+    if df_fifo.empty:
+        return pd.DataFrame()
+    required = {"TOOL_NAME", "QUANTITY", "DATE_RECEIVED", "EXPIRY_DATE"}
+    if not required.issubset(df_fifo.columns):
+        return pd.DataFrame()
+    df_fifo["QUANTITY"] = pd.to_numeric(df_fifo["QUANTITY"], errors="coerce").fillna(0).astype(int)
+    if "REMAINING_QTY" in df_fifo.columns:
+        df_fifo["REMAINING_QTY"] = pd.to_numeric(df_fifo["REMAINING_QTY"], errors="coerce").fillna(0).astype(int)
+    else:
+        df_fifo["REMAINING_QTY"] = df_fifo["QUANTITY"]
+    df_fifo["__rcv"] = df_fifo["DATE_RECEIVED"].apply(_parse_datetime_safe)
+    df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
+    return stable_sort_dataframe(
+        df_fifo,
+        primary_columns=["__rcv", "__exp", "id"],
+        fallback_name_columns=["TOOL_NAME"],
+    )
+
+
+def _consume_fifo_lots(df_fifo: pd.DataFrame, tool_name: str, qty_to_consume: int) -> List[Dict[str, Any]]:
+    if df_fifo.empty or qty_to_consume <= 0:
+        return []
+    if "TOOL_NAME" not in df_fifo.columns or "REMAINING_QTY" not in df_fifo.columns:
+        return []
+    work = df_fifo.copy()
+    work["REMAINING_QTY"] = pd.to_numeric(work["REMAINING_QTY"], errors="coerce").fillna(0).astype(int)
+    work["__exp"] = work["EXPIRY_DATE"].apply(_parse_datetime_safe) if "EXPIRY_DATE" in work.columns else pd.NaT
+    work = stable_sort_dataframe(work, primary_columns=["__exp", "DATE_RECEIVED", "id"], fallback_name_columns=["TOOL_NAME"])
+    remain = int(qty_to_consume)
+    updates: List[Dict[str, Any]] = []
+    for _, row in work.iterrows():
+        if str(row.get("TOOL_NAME", "")) != str(tool_name):
+            continue
+        lot_id = row.get("id", row.get("ID"))
+        if lot_id is None:
+            continue
+        lot_remaining = int(row.get("REMAINING_QTY", 0))
+        if lot_remaining <= 0:
+            continue
+        take = min(lot_remaining, remain)
+        new_remaining = lot_remaining - take
+        updates.append({"id": int(float(lot_id)), "REMAINING_QTY": int(new_remaining)})
+        remain -= take
+        if remain <= 0:
+            break
+    return updates
+
+
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
@@ -443,7 +535,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         fallback_name_columns=["TÊN BỘ DỤNG CỤ"],
     )
     df_gui_hap_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_gui_hap_log"))
-    df_nhan_ve_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_nhan_ve_log"))
+    df_nhan_ve_log_raw = lay_du_lieu_supabase("kho_nhan_ve_log")
+    df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
 
     df_holding = df_nk[df_nk["TÌNH TRẠNG"] == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
 
@@ -493,6 +586,9 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             "kho_danhmuc",
                             [{"id": int(d_id), "TỒN SẴN SÀNG": int(r_dm["TỒN SẴN SÀNG"]) - 1}],
                         )
+                        fifo_updates = _consume_fifo_lots(df_nhan_ve_log, m_r, 1)
+                        if fifo_updates:
+                            ghi_du_lieu_supabase("kho_nhan_ve_log", fifo_updates)
                     st.rerun()
         with c2:
             st.subheader("📝 Chốt dùng")
@@ -597,10 +693,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     st.warning("Đã gửi đi hấp nhưng chưa ghi được log kho_gui_hap_log.")
                 st.success("Đã gửi đi!")
                 st.rerun()
-        st.markdown("### Lịch sử gửi hấp")
-        if df_gui_hap_log.empty:
-            st.caption("Chưa có dữ liệu kho_gui_hap_log.")
-        else:
+        st.markdown("### Lịch sử gửi hấp theo ngày")
+        if not df_gui_hap_log.empty:
             if "TIMESTAMP_SENT" in df_gui_hap_log.columns:
                 df_gui_hap_log["__ts"] = df_gui_hap_log["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
             elif "NGÀY GIỜ" in df_gui_hap_log.columns:
@@ -616,6 +710,16 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             if not show_cols:
                 show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG", "NGÀY GIỜ"] if c in df_gui_hap_log.columns]
             st.dataframe(df_gui_hap_log[show_cols], use_container_width=True, hide_index=True)
+        else:
+            df_send_fallback = _build_send_log_from_nhatky(df_nk)
+            if df_send_fallback.empty:
+                st.caption("Chưa có dữ liệu gửi hấp.")
+            else:
+                st.dataframe(
+                    df_send_fallback[["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     with t3:
         st.subheader("📥 Nhận về kho")
@@ -642,22 +746,33 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     {
                         "TOOL_NAME": m_v,
                         "QUANTITY": int(s_v),
+                        "REMAINING_QTY": int(s_v),
                         "DATE_RECEIVED": ngay_nhan.strftime("%d/%m/%Y"),
                         "EXPIRY_DATE": ngay_het_han.strftime("%d/%m/%Y"),
                     }
                 ]
             )
             st.rerun()
+        st.markdown("### Lịch sử nhận về theo ngày")
+        if df_nhan_ve_log.empty:
+            st.caption("Chưa có dữ liệu nhận về.")
+        else:
+            st.dataframe(
+                df_nhan_ve_log[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with t4:
         st.subheader("📊 Báo cáo kho")
         st.caption("Ưu tiên sử dụng theo FEFO (hạn gần nhất trước).")
-        if not df_nhan_ve_log.empty and {"TOOL_NAME", "QUANTITY", "EXPIRY_DATE"}.issubset(df_nhan_ve_log.columns):
-            df_nhan_ve_log["__exp"] = df_nhan_ve_log["EXPIRY_DATE"].apply(_parse_datetime_safe)
-            df_nhan_ve_log["QUANTITY"] = pd.to_numeric(df_nhan_ve_log["QUANTITY"], errors="coerce").fillna(0).astype(int)
+        if not df_nhan_ve_log.empty and {"TOOL_NAME", "QUANTITY", "EXPIRY_DATE", "REMAINING_QTY"}.issubset(
+            df_nhan_ve_log.columns
+        ):
+            df_fifo = df_nhan_ve_log[df_nhan_ve_log["REMAINING_QTY"] > 0].copy()
             df_fifo = stable_sort_dataframe(
-                df_nhan_ve_log,
-                primary_columns=["__exp", "DATE_RECEIVED", "id"],
+                df_fifo,
+                primary_columns=["__exp", "__rcv", "id"],
                 fallback_name_columns=["TOOL_NAME"],
             )
             today = pd.Timestamp(datetime.now().date())
@@ -666,7 +781,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 lambda d: "⚠️ Sắp hết hạn" if pd.notna(d) and d <= near_threshold else ""
             )
             st.dataframe(
-                df_fifo[["TOOL_NAME", "QUANTITY", "DATE_RECEIVED", "EXPIRY_DATE", "CẢNH BÁO"]],
+                df_fifo[["TOOL_NAME", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE", "CẢNH BÁO"]],
                 use_container_width=True,
                 hide_index=True,
             )
