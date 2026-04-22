@@ -129,6 +129,22 @@ def ghi_du_lieu_supabase(table_name: str, list_data: List[Dict[str, Any]]) -> bo
             insert_url = f"{SUPABASE_URL}{table_name}"
             response_insert = session.post(insert_url, json=rows_insert, headers=insert_headers, timeout=20)
             if response_insert.status_code not in (200, 201, 204):
+                # Retry once for schema/case mismatch (PGRST204: missing column in schema cache)
+                if _is_missing_column_error(response_insert):
+                    lowered_rows: List[Dict[str, Any]] = []
+                    for row in rows_insert:
+                        lowered: Dict[str, Any] = {}
+                        for k, v in row.items():
+                            # Keep "id" as is, lower everything else (common when DB columns are unquoted lowercase).
+                            if str(k) == "id":
+                                lowered[k] = v
+                            else:
+                                lowered[str(k).strip().lower()] = v
+                        lowered_rows.append(lowered)
+                    retry_resp = session.post(insert_url, json=lowered_rows, headers=insert_headers, timeout=20)
+                    if retry_resp.status_code in (200, 201, 204):
+                        invalidate_data_cache()
+                        return True
                 if _response_is_null_id_error(response_insert):
                     next_id = _get_next_id(table_name)
                     rows_insert_with_id = []
@@ -222,10 +238,88 @@ def log_tools_sent_for_sterilization(rows: List[Dict[str, Any]]) -> bool:
     return ghi_du_lieu_supabase("kho_gui_hap_log", rows)
 
 
+def _is_missing_column_error(resp: requests.Response) -> bool:
+    try:
+        payload = resp.json() if hasattr(resp, "json") else {}
+    except Exception:
+        payload = {}
+    code = str(payload.get("code", ""))
+    message = str(payload.get("message", ""))
+    return code == "PGRST204" and "could not find the" in message.lower()
+
+
+def _try_insert_variants(table_name: str, rows_variants: List[List[Dict[str, Any]]]) -> bool:
+    session = get_http_session()
+    url = f"{SUPABASE_URL}{table_name}"
+    headers = {"Prefer": "return=minimal"}
+    last_error_text = ""
+    for rows in rows_variants:
+        try:
+            resp = session.post(url, json=[_normalize_row_for_write(r) for r in rows], headers=headers, timeout=20)
+            if resp.status_code in (200, 201, 204):
+                invalidate_data_cache()
+                return True
+            last_error_text = getattr(resp, "text", "") or ""
+            # Nếu lỗi do thiếu cột (schema/case mismatch), thử biến thể khác.
+            if _is_missing_column_error(resp):
+                continue
+        except Exception as exc:
+            last_error_text = str(exc)
+        break
+    if last_error_text:
+        st.error(f"Lỗi insert ({table_name}): {last_error_text}")
+    return False
+
+
 def log_tools_received_with_expiry(rows: List[Dict[str, Any]]) -> bool:
     if not rows:
         return True
-    return ghi_du_lieu_supabase("kho_nhan_ve_log", rows)
+    # Bảng `kho_nhan_ve_log` hay bị lệch kiểu đặt tên cột (HOA vs thường, hoặc VN).
+    # Retry theo các biến thể phổ biến để tránh lỗi PGRST204 (schema cache/column mismatch).
+    variants: List[List[Dict[str, Any]]] = []
+
+    # 1) Giữ nguyên payload hiện tại.
+    variants.append(rows)
+
+    # 2) Lowercase snake_case (phổ biến nhất nếu schema tạo không quote).
+    v_lower: List[Dict[str, Any]] = []
+    for r in rows:
+        rr = dict(r)
+        mapping = {
+            "TOOL_NAME": "tool_name",
+            "QUANTITY": "quantity",
+            "REMAINING_QTY": "remaining_qty",
+            "DATE_RECEIVED": "date_received",
+            "DATE_RECEIVED_DATE": "date_received_date",
+            "EXPIRY_DATE": "expiry_date",
+            "EXPIRY_DATE_DATE": "expiry_date_date",
+        }
+        for src, dst in mapping.items():
+            if src in rr and dst not in rr:
+                rr[dst] = rr.pop(src)
+        v_lower.append(rr)
+    variants.append(v_lower)
+
+    # 3) Vietnamese columns (một số kho dùng cột VN).
+    v_vn: List[Dict[str, Any]] = []
+    for r in rows:
+        rr = dict(r)
+        mapping = {
+            "TOOL_NAME": "TÊN BỘ DỤNG CỤ",
+            "QUANTITY": "SỐ LƯỢNG",
+            "REMAINING_QTY": "SL CÒN",
+            "DATE_RECEIVED": "NGÀY NHẬN",
+            "DATE_RECEIVED_DATE": "NGAY_NHAN_DATE",
+            "EXPIRY_DATE": "HẠN DÙNG",
+            "EXPIRY_DATE_DATE": "HAN_DUNG_DATE",
+        }
+        for src, dst in mapping.items():
+            if src in rr and dst not in rr:
+                rr[dst] = rr.pop(src)
+        v_vn.append(rr)
+    variants.append(v_vn)
+
+    return _try_insert_variants("kho_nhan_ve_log", variants)
 
 
 def get_fefo_batches(ten_dung_cu: str) -> pd.DataFrame:
