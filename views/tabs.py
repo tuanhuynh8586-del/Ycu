@@ -930,7 +930,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     with t2:
         st.subheader("📤 Gửi đi hấp")
         c_date, _ = st.columns([1, 2])
-        ngay_gui = c_date.date_input("Ngày gửi:", value=datetime.now())
+        ngay_gui = c_date.date_input("Ngày gửi:", value=datetime.now(), key="ngay_gui_hap")
         cho_g = df_nk[df_nk["TÌNH TRẠNG"] == "Chờ đi hấp"] if not df_nk.empty else pd.DataFrame()
         cho_g = stable_sort_dataframe(
             cho_g,
@@ -1027,84 +1027,165 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 st.rerun()
         st.markdown("### Lịch sử gửi hấp theo ngày")
         if not df_gui_hap_log.empty:
-            if "TIMESTAMP_SENT" in df_gui_hap_log.columns:
-                df_gui_hap_log["__ts"] = df_gui_hap_log["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
-            elif "NGÀY GIỜ" in df_gui_hap_log.columns:
-                df_gui_hap_log["__ts"] = df_gui_hap_log["NGÀY GIỜ"].apply(_parse_datetime_safe)
+            view_send = df_gui_hap_log.copy()
+            if "TIMESTAMP_SENT" in view_send.columns:
+                view_send["__ts"] = view_send["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
+            elif "NGÀY GIỜ" in view_send.columns:
+                view_send["__ts"] = view_send["NGÀY GIỜ"].apply(_parse_datetime_safe)
             else:
-                df_gui_hap_log["__ts"] = pd.NaT
-            df_gui_hap_log = stable_sort_dataframe(
-                df_gui_hap_log,
+                view_send["__ts"] = pd.NaT
+            view_send["__date"] = view_send["__ts"].dt.date
+            view_send = view_send[view_send["__date"] == ngay_gui.date()].copy()
+            view_send = stable_sort_dataframe(
+                view_send,
                 primary_columns=["__ts", "ORDER_INDEX", "id"],
                 fallback_name_columns=["TOOL_NAME", "TÊN BỘ DỤNG CỤ"],
             )
-            show_cols = [c for c in ["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"] if c in df_gui_hap_log.columns]
+            show_cols = [c for c in ["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"] if c in view_send.columns]
             if not show_cols:
-                show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG", "NGÀY GIỜ"] if c in df_gui_hap_log.columns]
-            st.dataframe(df_gui_hap_log[show_cols], use_container_width=True, hide_index=True)
+                show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG", "NGÀY GIỜ"] if c in view_send.columns]
+            if view_send.empty:
+                st.caption("Không có dữ liệu gửi hấp trong ngày đã chọn.")
+            else:
+                st.dataframe(view_send[show_cols], use_container_width=True, hide_index=True)
         else:
             df_send_fallback = _build_send_log_from_nhatky(df_nk)
             if df_send_fallback.empty:
                 st.caption("Chưa có dữ liệu gửi hấp.")
             else:
-                st.dataframe(
-                    df_send_fallback[["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                view_fb = df_send_fallback.copy()
+                view_fb["__ts"] = view_fb["TIMESTAMP_SENT"].apply(_parse_datetime_safe)
+                view_fb["__date"] = view_fb["__ts"].dt.date
+                view_fb = view_fb[view_fb["__date"] == ngay_gui.date()].copy()
+                if view_fb.empty:
+                    st.caption("Không có dữ liệu gửi hấp trong ngày đã chọn.")
+                else:
+                    st.dataframe(
+                        view_fb[["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
     with t3:
         st.subheader("📥 Nhận về kho")
-        m_v = st.selectbox("Bộ dụng cụ nhận về:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="n_v")
-        s_v = st.number_input("Số lượng thực nhận:", 1, 100, 1, key="s_n")
         ngay_nhan = st.date_input("Ngày hấp/nhận:", value=datetime.now(), key="ngay_nhan_kho")
-        if st.button("XÁC NHẬN NHẬN"):
-            r_dm_n = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_v].iloc[0].to_dict()
-            id_n = r_dm_n.get("id", r_dm_n.get("ID"))
-            ngay_het_han = ngay_nhan + timedelta(days=KHO_EXPIRY_DAYS)
-            ok_dm = ghi_du_lieu_supabase(
-                "kho_danhmuc",
-                [
-                    {
-                        "id": int(id_n),
-                        "TỒN SẴN SÀNG": int(r_dm_n["TỒN SẴN SÀNG"]) + s_v,
-                        "ĐANG HẤP": max(0, int(r_dm_n["ĐANG HẤP"]) - s_v),
-                        "GHI CHÚ": datetime.now().strftime("%d/%m/%Y"),
-                    }
-                ],
-            )
-            ok_batch = insert_batch(
-                ten_dung_cu=m_v,
-                ngay_hap=ngay_nhan,
-                so_luong=int(s_v),
-                han_dung=ngay_het_han,
-            )
-            ok_log = log_tools_received_with_expiry(
-                [
-                    {
-                        "TOOL_NAME": m_v,
-                        "QUANTITY": int(s_v),
-                        "REMAINING_QTY": int(s_v),
-                        "DATE_RECEIVED": ngay_nhan.strftime("%d/%m/%Y"),
-                        "DATE_RECEIVED_DATE": ngay_nhan.isoformat(),
-                        "EXPIRY_DATE": ngay_het_han.strftime("%d/%m/%Y"),
-                        "EXPIRY_DATE_DATE": ngay_het_han.isoformat(),
-                    }
-                ]
-            )
-            if ok_dm and ok_batch and ok_log:
-                st.rerun()
-            else:
-                st.error("Nhận về chưa hoàn tất. Vui lòng kiểm tra schema bảng kho_lo_hap/kho_nhan_ve_log.")
+
+        df_dang_hap = df_dm.copy()
+        df_dang_hap["ĐANG HẤP"] = pd.to_numeric(df_dang_hap.get("ĐANG HẤP", 0), errors="coerce").fillna(0).astype(int)
+        df_dang_hap = df_dang_hap[df_dang_hap["ĐANG HẤP"] > 0].copy()
+        df_dang_hap = stable_sort_dataframe(
+            df_dang_hap,
+            primary_columns=["GHI CHÚ", "STT", "THỨ TỰ", "ORDER_INDEX"],
+            fallback_name_columns=["TÊN BỘ DỤNG CỤ"],
+        )
+
+        if df_dang_hap.empty:
+            st.info("Hiện không có dụng cụ nào đang hấp.")
+        else:
+            st.markdown("### Danh sách đang hấp (xác nhận nhận về)")
+            with st.form("f_nhan_ve_bulk", clear_on_submit=True):
+                recv_rows: List[Dict[str, Any]] = []
+                cols = st.columns(2)
+                for idx, (_, r) in enumerate(df_dang_hap.iterrows()):
+                    with cols[idx % 2]:
+                        ten = str(r.get("TÊN BỘ DỤNG CỤ", "")).strip()
+                        if not ten:
+                            continue
+                        dang_hap_qty = int(r.get("ĐANG HẤP", 0))
+                        st.write(f"**{ten}** (Đang hấp: {dang_hap_qty})")
+                        qty_recv = st.number_input(
+                            "Số lượng nhận về:",
+                            min_value=0,
+                            max_value=dang_hap_qty,
+                            value=0,
+                            step=1,
+                            key=f"recv_{ten}",
+                        )
+                        recv_rows.append(
+                            {
+                                "ten": ten,
+                                "qty": int(qty_recv),
+                            }
+                        )
+
+                if st.form_submit_button("🚀 XÁC NHẬN NHẬN VỀ (THEO NGÀY ĐÃ CHỌN)"):
+                    to_process = [x for x in recv_rows if int(x["qty"]) > 0]
+                    if not to_process:
+                        st.warning("Bạn chưa nhập số lượng nhận về cho dụng cụ nào.")
+                    else:
+                        any_failed = False
+                        for item in to_process:
+                            m_v = item["ten"]
+                            s_v = int(item["qty"])
+                            sel = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_v]
+                            if sel.empty:
+                                any_failed = True
+                                st.error(f"Không tìm thấy `{m_v}` trong kho_danhmuc.")
+                                continue
+                            r_dm_n = sel.iloc[0].to_dict()
+                            id_n = r_dm_n.get("id", r_dm_n.get("ID"))
+                            if id_n is None:
+                                any_failed = True
+                                st.error(f"Không tìm thấy ID của `{m_v}`.")
+                                continue
+
+                            ngay_het_han = ngay_nhan + timedelta(days=KHO_EXPIRY_DAYS)
+                            ok_dm = ghi_du_lieu_supabase(
+                                "kho_danhmuc",
+                                [
+                                    {
+                                        "id": int(id_n),
+                                        "TỒN SẴN SÀNG": int(r_dm_n["TỒN SẴN SÀNG"]) + s_v,
+                                        "ĐANG HẤP": max(0, int(r_dm_n["ĐANG HẤP"]) - s_v),
+                                        "GHI CHÚ": ngay_nhan.strftime("%d/%m/%Y"),
+                                    }
+                                ],
+                            )
+                            ok_batch = insert_batch(
+                                ten_dung_cu=m_v,
+                                ngay_hap=ngay_nhan,
+                                so_luong=int(s_v),
+                                han_dung=ngay_het_han,
+                            )
+                            ok_log = log_tools_received_with_expiry(
+                                [
+                                    {
+                                        "TOOL_NAME": m_v,
+                                        "QUANTITY": int(s_v),
+                                        "REMAINING_QTY": int(s_v),
+                                        "DATE_RECEIVED": ngay_nhan.strftime("%d/%m/%Y"),
+                                        "DATE_RECEIVED_DATE": ngay_nhan.isoformat(),
+                                        "EXPIRY_DATE": ngay_het_han.strftime("%d/%m/%Y"),
+                                        "EXPIRY_DATE_DATE": ngay_het_han.isoformat(),
+                                    }
+                                ]
+                            )
+                            if not (ok_dm and ok_batch and ok_log):
+                                any_failed = True
+                                st.error(f"Nhận về `{m_v}` chưa hoàn tất.")
+
+                        if not any_failed:
+                            st.rerun()
         st.markdown("### Lịch sử nhận về theo ngày")
         if df_nhan_ve_log.empty:
             st.caption("Chưa có dữ liệu nhận về.")
         else:
-            st.dataframe(
-                df_nhan_ve_log[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
-                use_container_width=True,
-                hide_index=True,
-            )
+            view_recv = df_nhan_ve_log.copy()
+            view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
+            view_recv = view_recv[view_recv["__d"] == ngay_nhan.date()].copy()
+            if view_recv.empty:
+                st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
+            else:
+                view_recv = stable_sort_dataframe(
+                    view_recv,
+                    primary_columns=["DATE_RECEIVED", "EXPIRY_DATE", "id"],
+                    fallback_name_columns=["TOOL_NAME"],
+                )
+                st.dataframe(
+                    view_recv[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     with t4:
         st.subheader("📊 Báo cáo kho")
