@@ -1,14 +1,18 @@
 import calendar
 import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import pandas as pd
 
 from services.supabase import (
+    deduct_batch,
+    get_fefo_batches,
     ghi_du_lieu_supabase,
+    insert_batch,
     lay_du_lieu_supabase,
+    log_usage,
     log_tools_received_with_expiry,
     log_tools_sent_for_sterilization,
     xoa_dong_supabase,
@@ -427,6 +431,13 @@ def _parse_datetime_safe(value: Any) -> pd.Timestamp:
     return parsed
 
 
+def _parse_date_safe(value: Any) -> Optional[date]:
+    dt = _parse_datetime_safe(value)
+    if pd.isna(dt):
+        return None
+    return dt.date()
+
+
 def _normalize_fifo_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -443,8 +454,12 @@ def _normalize_fifo_columns(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[col] = "REMAINING_QTY"
         elif c_up in ("DATE_RECEIVED", "NGÀY NHẬN", "NGAY NHAN"):
             rename_map[col] = "DATE_RECEIVED"
+        elif c_up in ("DATE_RECEIVED_DATE", "NGAY_NHAN_DATE"):
+            rename_map[col] = "DATE_RECEIVED_DATE"
         elif c_up in ("EXPIRY_DATE", "HẠN DÙNG", "HAN DUNG"):
             rename_map[col] = "EXPIRY_DATE"
+        elif c_up in ("EXPIRY_DATE_DATE", "HAN_DUNG_DATE"):
+            rename_map[col] = "EXPIRY_DATE_DATE"
     return out.rename(columns=rename_map)
 
 
@@ -481,8 +496,14 @@ def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
         df_fifo["REMAINING_QTY"] = pd.to_numeric(df_fifo["REMAINING_QTY"], errors="coerce").fillna(0).astype(int)
     else:
         df_fifo["REMAINING_QTY"] = df_fifo["QUANTITY"]
-    df_fifo["__rcv"] = df_fifo["DATE_RECEIVED"].apply(_parse_datetime_safe)
-    df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
+    if "DATE_RECEIVED_DATE" in df_fifo.columns:
+        df_fifo["__rcv"] = pd.to_datetime(df_fifo["DATE_RECEIVED_DATE"], errors="coerce")
+    else:
+        df_fifo["__rcv"] = df_fifo["DATE_RECEIVED"].apply(_parse_datetime_safe)
+    if "EXPIRY_DATE_DATE" in df_fifo.columns:
+        df_fifo["__exp"] = pd.to_datetime(df_fifo["EXPIRY_DATE_DATE"], errors="coerce")
+    else:
+        df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
     return stable_sort_dataframe(
         df_fifo,
         primary_columns=["__rcv", "__exp", "id"],
@@ -519,6 +540,48 @@ def _consume_fifo_lots(df_fifo: pd.DataFrame, tool_name: str, qty_to_consume: in
     return updates
 
 
+def _fefo_priority_label(sorted_idx: int) -> str:
+    if sorted_idx == 0:
+        return "HIGH"
+    if sorted_idx <= 2:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _fefo_priority_badge(priority: str) -> str:
+    p = str(priority).upper()
+    if p == "HIGH":
+        return "🔴 HIGH"
+    if p == "MEDIUM":
+        return "🟡 MEDIUM"
+    return "🟢 LOW"
+
+
+def _normalize_batch_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    out.columns = [str(c).strip().upper() if str(c).strip().lower() != "id" else "id" for c in out.columns]
+    rename_map: Dict[str, str] = {}
+    for col in out.columns:
+        c = str(col).upper()
+        if c in ("TEN_DUNG_CU", "TÊN DỤNG CỤ", "TOOL_NAME", "TÊN BỘ DỤNG CỤ"):
+            rename_map[col] = "TEN_DUNG_CU"
+        elif c in ("NGAY_HAP", "NGÀY HẤP", "DATE_RECEIVED"):
+            rename_map[col] = "NGAY_HAP"
+        elif c in ("NGAY_HAP_DATE", "DATE_RECEIVED_DATE"):
+            rename_map[col] = "NGAY_HAP_DATE"
+        elif c in ("SO_LUONG", "SỐ LƯỢNG", "QUANTITY", "REMAINING_QTY"):
+            rename_map[col] = "SO_LUONG"
+        elif c in ("HAN_DUNG", "HẠN DÙNG", "EXPIRY_DATE"):
+            rename_map[col] = "HAN_DUNG"
+        elif c in ("HAN_DUNG_DATE", "EXPIRY_DATE_DATE"):
+            rename_map[col] = "HAN_DUNG_DATE"
+        elif c in ("TRANG_THAI", "TRẠNG THÁI", "STATUS"):
+            rename_map[col] = "TRANG_THAI"
+    return out.rename(columns=rename_map)
+
+
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
@@ -537,6 +600,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     df_gui_hap_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_gui_hap_log"))
     df_nhan_ve_log_raw = lay_du_lieu_supabase("kho_nhan_ve_log")
     df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
+    df_batches = _normalize_batch_columns(lay_du_lieu_supabase("kho_lo_hap"))
 
     df_holding = df_nk[df_nk["TÌNH TRẠNG"] == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
 
@@ -561,35 +625,88 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         c1, c2 = st.columns([1.2, 1.8])
         with c1:
             st.subheader("📍 Lấy dụng cụ")
-            with st.form("f_lay_v_final", clear_on_submit=True):
-                nv_l = st.selectbox("Người lấy:", options=danh_sach_ten)
-                ds_lbl = st.multiselect("Chọn dụng cụ:", options=df_dm["LABEL"].tolist())
-                if st.form_submit_button("XÁC NHẬN LẤY") and ds_lbl:
-                    for lbl in ds_lbl:
-                        m_r = map_label_to_name[lbl]
-                        ghi_du_lieu_supabase(
-                            "kho_nhatky",
-                            [
-                                {
-                                    "NGÀY GIỜ": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                                    "NHÂN VIÊN": nv_l,
-                                    "HÀNH ĐỘNG": "LẤY",
-                                    "TÊN BỘ DỤNG CỤ": m_r,
-                                    "SỐ LƯỢNG": 1,
-                                    "TÌNH TRẠNG": "Đang giữ",
-                                }
-                            ],
-                        )
-                        r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_r].iloc[0].to_dict()
-                        d_id = r_dm.get("id", r_dm.get("ID"))
-                        ghi_du_lieu_supabase(
-                            "kho_danhmuc",
-                            [{"id": int(d_id), "TỒN SẴN SÀNG": int(r_dm["TỒN SẴN SÀNG"]) - 1}],
-                        )
-                        fifo_updates = _consume_fifo_lots(df_nhan_ve_log, m_r, 1)
-                        if fifo_updates:
-                            ghi_du_lieu_supabase("kho_nhan_ve_log", fifo_updates)
-                    st.rerun()
+            tool_selected = st.selectbox("Chọn dụng cụ:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="fefo_tool_select")
+            fefo_df = _normalize_batch_columns(get_fefo_batches(tool_selected))
+            if not fefo_df.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
+                fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+                fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
+                if "HAN_DUNG_DATE" in fefo_df.columns:
+                    fefo_df["__exp"] = pd.to_datetime(fefo_df["HAN_DUNG_DATE"], errors="coerce")
+                else:
+                    fefo_df["__exp"] = fefo_df.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+                if "NGAY_HAP_DATE" in fefo_df.columns:
+                    fefo_df["__nhap"] = pd.to_datetime(fefo_df["NGAY_HAP_DATE"], errors="coerce")
+                else:
+                    fefo_df["__nhap"] = fefo_df.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+                fefo_df = stable_sort_dataframe(
+                    fefo_df,
+                    primary_columns=["__exp", "__nhap", "id"],
+                    fallback_name_columns=["TEN_DUNG_CU"],
+                )
+                st.markdown("**Gợi ý FEFO theo hạn dùng**")
+                if not fefo_df.empty:
+                    first_row = fefo_df.iloc[0]
+                    sug_ngay_hap = first_row.get("NGAY_HAP_DATE", first_row.get("NGAY_HAP", ""))
+                    sug_han_dung = first_row.get("HAN_DUNG_DATE", first_row.get("HAN_DUNG", ""))
+                    st.info(f"Ưu tiên dùng lô ngày {sug_ngay_hap} - hết hạn {sug_han_dung}")
+                for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
+                    pri = _fefo_priority_label(idx)
+                    ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
+                    han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
+                    st.caption(
+                        f"{_fefo_priority_badge(pri)} | Ngày hấp: {ngay_hap_show} | "
+                        f"SL: {int(row_b['SO_LUONG'])} | Hạn: {han_dung_show}"
+                    )
+                batch_options = []
+                for idx, (_, row_b) in enumerate(fefo_df.iterrows()):
+                    pri = _fefo_priority_label(idx)
+                    ngay_hap_show = row_b.get("NGAY_HAP_DATE", row_b.get("NGAY_HAP", ""))
+                    han_dung_show = row_b.get("HAN_DUNG_DATE", row_b.get("HAN_DUNG", ""))
+                    label = (
+                        f"{_fefo_priority_badge(pri)} | Hấp: {ngay_hap_show} | "
+                        f"SL:{int(row_b['SO_LUONG'])} | Hạn:{han_dung_show}"
+                    )
+                    batch_options.append((label, row_b))
+                with st.form("f_lay_v_final", clear_on_submit=True):
+                    nv_l = st.selectbox("Người lấy:", options=danh_sach_ten)
+                    selected_label = st.selectbox("Chọn lô xuất (bắt buộc):", options=[x[0] for x in batch_options])
+                    selected_row = next((r for l, r in batch_options if l == selected_label), None)
+                    max_qty = int(selected_row["SO_LUONG"]) if selected_row is not None else 1
+                    qty_take = st.number_input("Số lượng lấy:", min_value=1, max_value=max_qty, value=1, step=1)
+                    if st.form_submit_button("XÁC NHẬN LẤY"):
+                        if selected_row is None:
+                            st.error("Vui lòng chọn lô cụ thể trước khi lấy.")
+                        else:
+                            batch_id = int(selected_row.get("id", selected_row.get("ID")))
+                            ngay_hap = _parse_date_safe(
+                                selected_row.get("NGAY_HAP_DATE", selected_row.get("NGAY_HAP", ""))
+                            )
+                            if deduct_batch(batch_id, int(qty_take)):
+                                log_usage(tool_selected, ngay_hap, int(qty_take), nv_l)
+                                ghi_du_lieu_supabase(
+                                    "kho_nhatky",
+                                    [
+                                        {
+                                            "NGÀY GIỜ": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                                            "NHÂN VIÊN": nv_l,
+                                            "HÀNH ĐỘNG": "LẤY",
+                                            "TÊN BỘ DỤNG CỤ": tool_selected,
+                                            "SỐ LƯỢNG": int(qty_take),
+                                            "TÌNH TRẠNG": "Đang giữ",
+                                        }
+                                    ],
+                                )
+                                r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected].iloc[0].to_dict()
+                                d_id = r_dm.get("id", r_dm.get("ID"))
+                                ghi_du_lieu_supabase(
+                                    "kho_danhmuc",
+                                    [{"id": int(d_id), "TỒN SẴN SÀNG": int(r_dm["TỒN SẴN SÀNG"]) - int(qty_take)}],
+                                )
+                                st.rerun()
+                            else:
+                                st.error("Không thể trừ lô đã chọn. Vui lòng kiểm tra dữ liệu kho_lo_hap.")
+            else:
+                st.warning("Chưa có lô ready trong kho_lo_hap cho dụng cụ này.")
         with c2:
             st.subheader("📝 Chốt dùng")
             df_sua = df_nk[df_nk["TÌNH TRẠNG"].isin(["Đang giữ", "Chờ đi hấp"])] if not df_nk.empty else pd.DataFrame()
@@ -725,7 +842,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         st.subheader("📥 Nhận về kho")
         m_v = st.selectbox("Bộ dụng cụ nhận về:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="n_v")
         s_v = st.number_input("Số lượng thực nhận:", 1, 100, 1, key="s_n")
-        ngay_nhan = st.date_input("Ngày nhận:", value=datetime.now(), key="ngay_nhan_kho")
+        ngay_nhan = st.date_input("Ngày hấp/nhận:", value=datetime.now(), key="ngay_nhan_kho")
         if st.button("XÁC NHẬN NHẬN"):
             r_dm_n = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_v].iloc[0].to_dict()
             id_n = r_dm_n.get("id", r_dm_n.get("ID"))
@@ -741,6 +858,12 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     }
                 ],
             )
+            insert_batch(
+                ten_dung_cu=m_v,
+                ngay_hap=ngay_nhan,
+                so_luong=int(s_v),
+                han_dung=ngay_het_han,
+            )
             log_tools_received_with_expiry(
                 [
                     {
@@ -748,7 +871,9 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         "QUANTITY": int(s_v),
                         "REMAINING_QTY": int(s_v),
                         "DATE_RECEIVED": ngay_nhan.strftime("%d/%m/%Y"),
+                        "DATE_RECEIVED_DATE": ngay_nhan.isoformat(),
                         "EXPIRY_DATE": ngay_het_han.strftime("%d/%m/%Y"),
+                        "EXPIRY_DATE_DATE": ngay_het_han.isoformat(),
                     }
                 ]
             )
@@ -765,30 +890,34 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
     with t4:
         st.subheader("📊 Báo cáo kho")
-        st.caption("Ưu tiên sử dụng theo FEFO (hạn gần nhất trước).")
-        if not df_nhan_ve_log.empty and {"TOOL_NAME", "QUANTITY", "EXPIRY_DATE", "REMAINING_QTY"}.issubset(
-            df_nhan_ve_log.columns
-        ):
-            df_fifo = df_nhan_ve_log[df_nhan_ve_log["REMAINING_QTY"] > 0].copy()
-            df_fifo = stable_sort_dataframe(
-                df_fifo,
-                primary_columns=["__exp", "__rcv", "id"],
-                fallback_name_columns=["TOOL_NAME"],
+        st.caption("Báo cáo theo lô hấp (FEFO: hạn gần nhất trước).")
+        if not df_batches.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(df_batches.columns):
+            report_df = df_batches.copy()
+            report_df["SO_LUONG"] = pd.to_numeric(report_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+            if "TRANG_THAI" not in report_df.columns:
+                report_df["TRANG_THAI"] = report_df["SO_LUONG"].apply(lambda x: "used" if int(x) <= 0 else "ready")
+            if "HAN_DUNG_DATE" in report_df.columns:
+                report_df["__exp"] = pd.to_datetime(report_df["HAN_DUNG_DATE"], errors="coerce")
+            else:
+                report_df["__exp"] = report_df.get("HAN_DUNG", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+            if "NGAY_HAP_DATE" in report_df.columns:
+                report_df["__nhap"] = pd.to_datetime(report_df["NGAY_HAP_DATE"], errors="coerce")
+            else:
+                report_df["__nhap"] = report_df.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
+            report_df = stable_sort_dataframe(
+                report_df,
+                primary_columns=["__exp", "__nhap", "id"],
+                fallback_name_columns=["TEN_DUNG_CU"],
             )
-            today = pd.Timestamp(datetime.now().date())
-            near_threshold = today + pd.Timedelta(days=3)
-            df_fifo["CẢNH BÁO"] = df_fifo["__exp"].apply(
-                lambda d: "⚠️ Sắp hết hạn" if pd.notna(d) and d <= near_threshold else ""
-            )
+            report_df = report_df.reset_index(drop=True)
+            report_df["PRIORITY"] = report_df.index.map(_fefo_priority_label)
+            report_df["PRIORITY"] = report_df["PRIORITY"].apply(_fefo_priority_badge)
+            report_df["NGAY_HAP_SHOW"] = report_df.get("NGAY_HAP_DATE", report_df.get("NGAY_HAP", ""))
+            report_df["HAN_DUNG_SHOW"] = report_df.get("HAN_DUNG_DATE", report_df.get("HAN_DUNG", ""))
             st.dataframe(
-                df_fifo[["TOOL_NAME", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE", "CẢNH BÁO"]],
+                report_df[["TEN_DUNG_CU", "NGAY_HAP_SHOW", "SO_LUONG", "HAN_DUNG_SHOW", "TRANG_THAI", "PRIORITY"]],
                 use_container_width=True,
                 hide_index=True,
             )
-            if not df_fifo.empty:
-                first_tool = df_fifo.iloc[0]["TOOL_NAME"]
-                first_exp = df_fifo.iloc[0]["EXPIRY_DATE"]
-                st.info(f"Gợi ý xuất trước: **{first_tool}** (hạn: {first_exp}).")
         else:
-            st.caption("Chưa có dữ liệu FEFO từ kho_nhan_ve_log.")
-        st.dataframe(df_dm[[c for c in df_dm.columns if c != "LABEL"]], use_container_width=True)
+            st.caption("Chưa có dữ liệu lô hấp trong kho_lo_hap.")

@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -223,3 +224,81 @@ def log_tools_received_with_expiry(rows: List[Dict[str, Any]]) -> bool:
     if not rows:
         return True
     return ghi_du_lieu_supabase("kho_nhan_ve_log", rows)
+
+
+def get_fefo_batches(ten_dung_cu: str) -> pd.DataFrame:
+    tool_name = str(ten_dung_cu or "").strip()
+    if not tool_name:
+        return pd.DataFrame()
+    df = lay_du_lieu_supabase("kho_lo_hap")
+    if df.empty:
+        return df
+    status_col = "TRANG_THAI" if "TRANG_THAI" in df.columns else "TRẠNG THÁI" if "TRẠNG THÁI" in df.columns else ""
+    if status_col:
+        df = df[df[status_col].astype(str).str.lower() == "ready"]
+    name_col = "TEN_DUNG_CU" if "TEN_DUNG_CU" in df.columns else "TÊN DỤNG CỤ" if "TÊN DỤNG CỤ" in df.columns else ""
+    if name_col:
+        df = df[df[name_col].astype(str) == tool_name]
+    if "HAN_DUNG_DATE" in df.columns:
+        df["__exp"] = pd.to_datetime(df["HAN_DUNG_DATE"], errors="coerce")
+        df = df.sort_values(by=["__exp", "id"], kind="stable", na_position="last")
+    else:
+        expiry_col = "HAN_DUNG" if "HAN_DUNG" in df.columns else "HẠN DÙNG" if "HẠN DÙNG" in df.columns else ""
+        if expiry_col:
+            df["__exp"] = pd.to_datetime(df[expiry_col], errors="coerce")
+            df = df.sort_values(by=["__exp", "id"], kind="stable", na_position="last")
+    df = df.drop(columns=["__exp"], errors="ignore")
+    return df
+
+
+def insert_batch(ten_dung_cu: str, ngay_hap: date, so_luong: int, han_dung: date) -> bool:
+    ngay_hap_text = ngay_hap.strftime("%d/%m/%Y")
+    han_dung_text = han_dung.strftime("%d/%m/%Y")
+    payload = [
+        {
+            "TEN_DUNG_CU": str(ten_dung_cu),
+            "NGAY_HAP": ngay_hap_text,
+            "NGAY_HAP_DATE": ngay_hap.isoformat(),
+            "SO_LUONG": int(so_luong),
+            "HAN_DUNG": han_dung_text,
+            "HAN_DUNG_DATE": han_dung.isoformat(),
+            "TRANG_THAI": "ready",
+        }
+    ]
+    return ghi_du_lieu_supabase("kho_lo_hap", payload)
+
+
+def deduct_batch(batch_id: int, so_luong: int) -> bool:
+    df = lay_du_lieu_supabase("kho_lo_hap")
+    if df.empty:
+        return False
+    row = df[df["id"] == int(batch_id)]
+    if row.empty:
+        return False
+    current_qty = int(pd.to_numeric(row.iloc[0].get("SO_LUONG", 0), errors="coerce"))
+    new_qty = max(0, current_qty - int(so_luong))
+    payload: Dict[str, Any] = {"id": int(batch_id), "SO_LUONG": new_qty}
+    if new_qty == 0:
+        payload["TRANG_THAI"] = "used"
+    return ghi_du_lieu_supabase("kho_lo_hap", [payload])
+
+
+def log_usage(
+    ten_dung_cu: str,
+    ngay_hap: Optional[date],
+    so_luong: int,
+    nguoi_lay: str,
+) -> bool:
+    now_ts = datetime.now()
+    payload = [
+        {
+            "TEN_DUNG_CU": str(ten_dung_cu),
+            "NGAY_HAP": ngay_hap.strftime("%d/%m/%Y") if ngay_hap else "",
+            "NGAY_HAP_DATE": ngay_hap.isoformat() if ngay_hap else None,
+            "SO_LUONG": int(so_luong),
+            "NGUOI_LAY": str(nguoi_lay),
+            "THOI_DIEM_XUAT": now_ts.strftime("%d/%m/%Y %H:%M:%S"),
+            "THOI_DIEM_XUAT_TS": now_ts.isoformat(sep=" ", timespec="seconds"),
+        }
+    ]
+    return ghi_du_lieu_supabase("kho_xuat_log", payload)
