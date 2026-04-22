@@ -1168,14 +1168,14 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             ok_log = log_tools_received_with_expiry(
                                 [
                                     {
-                                        "TOOL_NAME": m_v,
-                                        "QUANTITY": int(s_v),
-                                        "REMAINING_QTY": int(s_v),
-                                        # Gửi định dạng ISO để Supabase/Postgres (date) parse chắc chắn
-                                        "DATE_RECEIVED": ngay_nhan.isoformat(),
-                                        "DATE_RECEIVED_DATE": ngay_nhan.isoformat(),
-                                        "EXPIRY_DATE": ngay_het_han.isoformat(),
-                                        "EXPIRY_DATE_DATE": ngay_het_han.isoformat(),
+                                        # Dùng tên cột lowercase đúng schema Supabase hiện tại
+                                        "tool_name": m_v,
+                                        "quantity": int(s_v),
+                                        "remaining_qty": int(s_v),
+                                        "date_received": ngay_nhan.isoformat(),
+                                        "date_received_date": ngay_nhan.isoformat(),
+                                        "expiry_date": ngay_het_han.isoformat(),
+                                        "expiry_date_date": ngay_het_han.isoformat(),
                                     }
                                 ]
                             )

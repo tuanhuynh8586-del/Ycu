@@ -405,17 +405,39 @@ def log_usage(
     nguoi_lay: str,
 ) -> bool:
     now_ts = datetime.now()
-    payload = [
-        {
-            "ten_dung_cu": str(ten_dung_cu),
-            "ngay_hap": ngay_hap.strftime("%Y-%m-%d") if ngay_hap else None,
-            "ngay_hap_dat": ngay_hap.isoformat() if ngay_hap else None,
-            "so_luong": int(so_luong),
-            "nguoi_lay": str(nguoi_lay),
-            "thoi_diem_xuat_ts": now_ts.isoformat(sep=" ", timespec="seconds"),
-        }
-    ]
-    return ghi_du_lieu_supabase("kho_xuat_log", payload)
+    base_row = {
+        "ten_dung_cu": str(ten_dung_cu),
+        "ngay_hap": ngay_hap.isoformat() if ngay_hap else None,
+        "so_luong": int(so_luong),
+        "nguoi_lay": str(nguoi_lay),
+        "thoi_diem_xuat_ts": now_ts.isoformat(sep=" ", timespec="seconds"),
+    }
+
+    # Một số schema cũ đặt tên cột khác nhau → thử vài biến thể phổ biến.
+    variants: List[List[Dict[str, Any]]] = []
+
+    # 1) Lowercase chuẩn.
+    variants.append([base_row])
+
+    # 2) Biến thể sửa typo phổ biến: ngay_hap_date thay vì ngay_hap_dat/ngay_hap.
+    v2 = dict(base_row)
+    v2["ngay_hap_date"] = v2.pop("ngay_hap")
+    variants.append([v2])
+
+    # 3) Biến thể dùng tên cột HOA (nếu bảng tạo quoted/upper).
+    variants.append(
+        [
+            {
+                "TEN_DUNG_CU": base_row["ten_dung_cu"],
+                "NGAY_HAP": base_row["ngay_hap"],
+                "SO_LUONG": base_row["so_luong"],
+                "NGUOI_LAY": base_row["nguoi_lay"],
+                "THOI_DIEM_XUAT_TS": base_row["thoi_diem_xuat_ts"],
+            }
+        ]
+    )
+
+    return _try_insert_variants("kho_xuat_log", variants)
 # =========================
 # Remember Me functions
 # =========================
