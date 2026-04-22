@@ -405,7 +405,7 @@ def _normalize_kho_columns(df: pd.DataFrame) -> pd.DataFrame:
     rename_dict: Dict[str, str] = {}
     for col in result.columns:
         c_up = col.upper()
-        if "TÊN BỘ" in c_up:
+        if "TÊN BỘ" in c_up or c_up in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ"):
             rename_dict[col] = "TÊN BỘ DỤNG CỤ"
         if "TỒN" in c_up:
             rename_dict[col] = "TỒN SẴN SÀNG"
@@ -617,7 +617,17 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         return f"{pfx}{mon} (Tồn: {ton}{who})"
 
     df_dm["LABEL"] = df_dm.apply(make_super_label, axis=1)
+    tool_name_col = "TÊN BỘ DỤNG CỤ" if "TÊN BỘ DỤNG CỤ" in df_dm.columns else ""
+    if not tool_name_col:
+        fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
+        if fallback_tool_cols:
+            tool_name_col = fallback_tool_cols[0]
+            df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[tool_name_col].astype(str)
+        else:
+            st.warning("Không tìm thấy cột tên dụng cụ trong kho_danhmuc.")
+            return
     map_label_to_name = dict(zip(df_dm["LABEL"], df_dm["TÊN BỘ DỤNG CỤ"]))
+    tool_options = [str(x) for x in df_dm["LABEL"].tolist() if str(x).strip()]
 
     t1, t2, t3, t4 = st.tabs(["🚀 LẤY & CHỐT", "📤 GỬI TT", "📥 NHẬN VỀ", "📊 BÁO CÁO"])
 
@@ -625,7 +635,12 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         c1, c2 = st.columns([1.2, 1.8])
         with c1:
             st.subheader("📍 Lấy dụng cụ")
-            tool_selected = st.selectbox("Chọn dụng cụ:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="fefo_tool_select")
+            tool_selected_label = st.selectbox(
+                "Chọn dụng cụ:",
+                options=tool_options,
+                key="fefo_tool_select",
+            )
+            tool_selected = map_label_to_name.get(tool_selected_label, tool_selected_label)
             fefo_df = _normalize_batch_columns(get_fefo_batches(tool_selected))
             if not fefo_df.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
                 fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
@@ -745,30 +760,51 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         )
         st.write("---")
         st.write("➕ **Gửi thêm đồ khác**")
-        col_m, col_s, col_b_a = st.columns([2, 1, 1])
-        m_them = col_m.selectbox("Bộ dụng cụ:", options=df_dm["TÊN BỘ DỤNG CỤ"].tolist(), key="add_g")
-        s_them = col_s.number_input("SL:", 1, 100, 1, key="add_s")
-        if col_b_a.button("THÊM"):
-            ghi_du_lieu_supabase(
-                "kho_nhatky",
-                [
-                    {
-                        "NGÀY GIỜ": ngay_gui.strftime("%d/%m/%Y"),
-                        "NHÂN VIÊN": "Hệ thống",
-                        "HÀNH ĐỘNG": "GỬI THÊM",
-                        "TÊN BỘ DỤNG CỤ": m_them,
-                        "SỐ LƯỢNG": s_them,
-                        "TÌNH TRẠNG": "Chờ đi hấp",
-                    }
-                ],
-            )
-            r_dm_t = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_them].iloc[0].to_dict()
-            id_t = r_dm_t.get("id", r_dm_t.get("ID"))
-            ghi_du_lieu_supabase(
-                "kho_danhmuc",
-                [{"id": int(id_t), "TỒN SẴN SÀNG": int(r_dm_t["TỒN SẴN SÀNG"]) - s_them}],
-            )
-            st.rerun()
+        selected_labels = st.multiselect(
+            "Chọn nhiều bộ dụng cụ:",
+            options=tool_options,
+            key="add_g_multi",
+        )
+        selected_tools = [map_label_to_name.get(label, label) for label in selected_labels]
+        qty_by_tool: Dict[str, int] = {}
+        if selected_tools:
+            qty_cols = st.columns(2)
+            for idx, tool_name in enumerate(selected_tools):
+                with qty_cols[idx % 2]:
+                    qty_by_tool[tool_name] = st.number_input(
+                        f"SL {tool_name}:",
+                        min_value=1,
+                        max_value=100,
+                        value=1,
+                        step=1,
+                        key=f"add_s_{tool_name}",
+                    )
+        if st.button("THÊM"):
+            if not selected_tools:
+                st.warning("Vui lòng chọn ít nhất 1 bộ dụng cụ.")
+            else:
+                for tool_name in selected_tools:
+                    qty_val = int(qty_by_tool.get(tool_name, 1))
+                    ghi_du_lieu_supabase(
+                        "kho_nhatky",
+                        [
+                            {
+                                "NGÀY GIỜ": ngay_gui.strftime("%d/%m/%Y"),
+                                "NHÂN VIÊN": "Hệ thống",
+                                "HÀNH ĐỘNG": "GỬI THÊM",
+                                "TÊN BỘ DỤNG CỤ": tool_name,
+                                "SỐ LƯỢNG": qty_val,
+                                "TÌNH TRẠNG": "Chờ đi hấp",
+                            }
+                        ],
+                    )
+                    r_dm_t = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name].iloc[0].to_dict()
+                    id_t = r_dm_t.get("id", r_dm_t.get("ID"))
+                    ghi_du_lieu_supabase(
+                        "kho_danhmuc",
+                        [{"id": int(id_t), "TỒN SẴN SÀNG": int(r_dm_t["TỒN SẴN SÀNG"]) - qty_val}],
+                    )
+                st.rerun()
 
         if not cho_g.empty:
             st.dataframe(cho_g[["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"]], use_container_width=True)
@@ -890,6 +926,18 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
     with t4:
         st.subheader("📊 Báo cáo kho")
+        st.markdown("### Cơ số kho hiện tại")
+        if "TÊN BỘ DỤNG CỤ" not in df_dm.columns:
+            fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
+            if fallback_tool_cols:
+                df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[fallback_tool_cols[0]].astype(str)
+        dm_show_cols = [c for c in ["TÊN BỘ DỤNG CỤ", "TỒN SẴN SÀNG", "ĐANG HẤP", "GHI CHÚ"] if c in df_dm.columns]
+        if dm_show_cols:
+            st.dataframe(df_dm[dm_show_cols], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Không tìm thấy cột cơ số kho để hiển thị.")
+        st.markdown("---")
+        st.markdown("### Báo cáo theo lô hấp")
         st.caption("Báo cáo theo lô hấp (FEFO: hạn gần nhất trước).")
         if not df_batches.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(df_batches.columns):
             report_df = df_batches.copy()
