@@ -970,7 +970,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             r_dm_n = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == m_v].iloc[0].to_dict()
             id_n = r_dm_n.get("id", r_dm_n.get("ID"))
             ngay_het_han = ngay_nhan + timedelta(days=KHO_EXPIRY_DAYS)
-            ghi_du_lieu_supabase(
+            ok_dm = ghi_du_lieu_supabase(
                 "kho_danhmuc",
                 [
                     {
@@ -981,13 +981,13 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     }
                 ],
             )
-            insert_batch(
+            ok_batch = insert_batch(
                 ten_dung_cu=m_v,
                 ngay_hap=ngay_nhan,
                 so_luong=int(s_v),
                 han_dung=ngay_het_han,
             )
-            log_tools_received_with_expiry(
+            ok_log = log_tools_received_with_expiry(
                 [
                     {
                         "TOOL_NAME": m_v,
@@ -1000,7 +1000,10 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     }
                 ]
             )
-            st.rerun()
+            if ok_dm and ok_batch and ok_log:
+                st.rerun()
+            else:
+                st.error("Nhận về chưa hoàn tất. Vui lòng kiểm tra schema bảng kho_lo_hap/kho_nhan_ve_log.")
         st.markdown("### Lịch sử nhận về theo ngày")
         if df_nhan_ve_log.empty:
             st.caption("Chưa có dữ liệu nhận về.")

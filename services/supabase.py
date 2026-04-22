@@ -254,7 +254,7 @@ def get_fefo_batches(ten_dung_cu: str) -> pd.DataFrame:
 def insert_batch(ten_dung_cu: str, ngay_hap: date, so_luong: int, han_dung: date) -> bool:
     ngay_hap_text = ngay_hap.strftime("%d/%m/%Y")
     han_dung_text = han_dung.strftime("%d/%m/%Y")
-    payload = [
+    payload_upper = [
         {
             "TEN_DUNG_CU": str(ten_dung_cu),
             "NGAY_HAP": ngay_hap_text,
@@ -265,7 +265,21 @@ def insert_batch(ten_dung_cu: str, ngay_hap: date, so_luong: int, han_dung: date
             "TRANG_THAI": "ready",
         }
     ]
-    return ghi_du_lieu_supabase("kho_lo_hap", payload)
+    if ghi_du_lieu_supabase("kho_lo_hap", payload_upper):
+        return True
+    # Fallback for schemas created with unquoted lowercase columns.
+    payload_lower = [
+        {
+            "ten_dung_cu": str(ten_dung_cu),
+            "ngay_hap": ngay_hap_text,
+            "ngay_hap_date": ngay_hap.isoformat(),
+            "so_luong": int(so_luong),
+            "han_dung": han_dung_text,
+            "han_dung_date": han_dung.isoformat(),
+            "trang_thai": "ready",
+        }
+    ]
+    return ghi_du_lieu_supabase("kho_lo_hap", payload_lower)
 
 
 def deduct_batch(batch_id: int, so_luong: int) -> bool:
@@ -277,10 +291,15 @@ def deduct_batch(batch_id: int, so_luong: int) -> bool:
         return False
     current_qty = int(pd.to_numeric(row.iloc[0].get("SO_LUONG", 0), errors="coerce"))
     new_qty = max(0, current_qty - int(so_luong))
-    payload: Dict[str, Any] = {"id": int(batch_id), "SO_LUONG": new_qty}
+    payload_upper: Dict[str, Any] = {"id": int(batch_id), "SO_LUONG": new_qty}
     if new_qty == 0:
-        payload["TRANG_THAI"] = "used"
-    return ghi_du_lieu_supabase("kho_lo_hap", [payload])
+        payload_upper["TRANG_THAI"] = "used"
+    if ghi_du_lieu_supabase("kho_lo_hap", [payload_upper]):
+        return True
+    payload_lower: Dict[str, Any] = {"id": int(batch_id), "so_luong": new_qty}
+    if new_qty == 0:
+        payload_lower["trang_thai"] = "used"
+    return ghi_du_lieu_supabase("kho_lo_hap", [payload_lower])
 
 
 def log_usage(
