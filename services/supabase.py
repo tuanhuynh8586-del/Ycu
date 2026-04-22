@@ -355,6 +355,34 @@ def update_remember_token(username: str, token: str):
     st.error("Không thể ghi remember token lên Supabase (không match được cột USERNAME/REMEMBER_TOKEN).")
     return False
 
+
+def update_remember_token_by_id(user_id: Any, token: str) -> bool:
+    """Cập nhật token remember me theo id (ổn định nhất)."""
+    if not _supabase_config_ready():
+        _notify_missing_config_once()
+        return False
+    if user_id is None or str(user_id).strip() == "":
+        return False
+    try:
+        uid = int(float(user_id))
+    except Exception:
+        return False
+
+    session = get_http_session()
+    token_val = str(token or "").strip()
+    for t_col in ("REMEMBER_TOKEN", "remember_token"):
+        resp = session.patch(
+            f"{SUPABASE_URL}nhansu_2026?id=eq.{uid}",
+            json={t_col: token_val},
+            headers={"Prefer": "return=minimal"},
+            timeout=20,
+        )
+        if resp.status_code in (200, 204):
+            invalidate_data_cache()
+            return True
+    st.error("Không thể ghi remember token theo id (kiểm tra quyền update/RLS và tên cột).")
+    return False
+
 def get_user_by_token(token: str):
     """Lấy thông tin user từ token"""
     t = str(token or "").strip()

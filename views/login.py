@@ -1,7 +1,7 @@
 import time
 import uuid
 import streamlit as st
-from services.supabase import lay_du_lieu_supabase, update_remember_token
+from services.supabase import lay_du_lieu_supabase, update_remember_token_by_id
 
 def login() -> None:
     st.title("🔑 ĐĂNG NHẬP HỆ THỐNG")
@@ -38,25 +38,44 @@ def login() -> None:
         st.session_state["ho_ten"] = match.iloc[0]["HỌ VÀ TÊN"]
         st.session_state["user_role"] = str(match.iloc[0]["ROLE"]).upper()
 
+        def _set_rt_query_param(token: str) -> None:
+            # Streamlit mới: st.query_params. Streamlit cũ: experimental_set_query_params
+            try:
+                st.query_params["rt"] = token
+                return
+            except Exception:
+                pass
+            try:
+                st.experimental_set_query_params(rt=token)
+            except Exception:
+                pass
+
+        def _clear_rt_query_param() -> None:
+            try:
+                st.query_params.pop("rt", None)
+                return
+            except Exception:
+                pass
+            try:
+                st.experimental_set_query_params()
+            except Exception:
+                pass
+
         # ✅ Nếu chọn remember me thì tạo token và lưu vào Supabase
         if remember_me:
             token = str(uuid.uuid4()).lower()
-            ok = update_remember_token(user_login, token)
+            # update theo id để chắc chắn match 1 dòng (tránh lệch hoa/thường USERNAME)
+            user_id = match.iloc[0].get("id", match.iloc[0].get("ID"))
+            ok = update_remember_token_by_id(user_id, token)
             if ok:
                 # dùng chung key với app.py để auto-login + persist qua F5 bằng query param
                 st.session_state["remember_token"] = token
-                try:
-                    st.query_params["rt"] = token
-                except Exception:
-                    pass
+                _set_rt_query_param(token)
             else:
                 st.warning("Không thể ghi token duy trì đăng nhập lên Supabase. Vui lòng thử lại.")
         else:
             st.session_state.pop("remember_token", None)
-            try:
-                st.query_params.pop("rt", None)
-            except Exception:
-                pass
+            _clear_rt_query_param()
 
         st.success(f"Chào {st.session_state['ho_ten']}!")
         time.sleep(1)
