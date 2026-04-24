@@ -541,6 +541,13 @@ def _normalize_text_key(value: Any) -> str:
     return text
 
 
+def _is_ready_status(value: Any) -> bool:
+    key = _normalize_text_key(value)
+    if key == "":
+        return True
+    return any(token in key for token in ("ready", "sansang"))
+
+
 def _ensure_co_so_column(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -773,12 +780,9 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
     if not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(work.columns):
         return pd.DataFrame()
     if "TRANG_THAI" in work.columns:
-        status = work["TRANG_THAI"].astype(str).str.strip().str.lower()
-        work = work[status.str.contains("ready", regex=False, na=False)].copy()
-    tool_name_key = str(tool_name).strip().lower()
-    work = work[
-        work["TEN_DUNG_CU"].astype(str).str.strip().str.lower() == tool_name_key
-    ].copy()
+        work = work[work["TRANG_THAI"].apply(_is_ready_status)].copy()
+    tool_name_key = _normalize_text_key(tool_name)
+    work = work[work["TEN_DUNG_CU"].apply(_normalize_text_key) == tool_name_key].copy()
     work["SO_LUONG"] = pd.to_numeric(work["SO_LUONG"], errors="coerce").fillna(0).astype(int)
     work = work[work["SO_LUONG"] > 0].copy()
     if "HAN_DUNG_DATE" in work.columns:
@@ -885,7 +889,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 st.warning(f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap.")
                                 continue
                             st.warning(
-                                f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap. "
+                                f"⚠️ `{tool_selected}` chưa có lô ready/sẵn sàng trong kho_lo_hap. "
                                 "Hệ thống sẽ xuất theo tồn sẵn sàng."
                             )
                             qty_take = st.number_input(
@@ -914,7 +918,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 st.warning(f"⚠️ `{tool_selected}` không còn số lượng khả dụng theo lô.")
                                 continue
                             st.warning(
-                                f"⚠️ `{tool_selected}` chưa đồng bộ lô khả dụng. "
+                                f"⚠️ `{tool_selected}` chưa có lô ready/sẵn sàng khả dụng. "
                                 "Hệ thống sẽ xuất theo tồn sẵn sàng."
                             )
                             qty_take = st.number_input(
@@ -1462,7 +1466,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         if has_co_so:
             base_cols.append("CƠ SỐ")
         elif has_ton_san_sang:
-            # fallback nếu bảng chưa có cột CƠ SỐ
+            # vẫn hiển thị dưới nhãn CƠ SỐ để người dùng nhất quán.
             base_cols.append("TỒN SẴN SÀNG")
         if has_dang_hap:
             base_cols.append("ĐANG HẤP")
@@ -1487,7 +1491,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     view_dm = view_dm.sort_values(by=["_ORIG_ORDER"], kind="stable").drop(columns=["_ORIG_ORDER"], errors="ignore")
 
             # Nếu dùng fallback "TỒN SẴN SÀNG" thay cho CƠ SỐ thì đổi nhãn hiển thị cho đúng ý nghĩa
-            if (not has_co_so) and ("TỒN SẴN SÀNG" in view_dm.columns) and (not show_4_cols):
+            if (not has_co_so) and ("TỒN SẴN SÀNG" in view_dm.columns):
                 view_dm = view_dm.rename(columns={"TỒN SẴN SÀNG": "CƠ SỐ"})
 
             st.dataframe(
