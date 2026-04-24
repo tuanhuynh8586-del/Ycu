@@ -510,11 +510,15 @@ def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
     required = {"TOOL_NAME", "QUANTITY", "DATE_RECEIVED", "EXPIRY_DATE"}
     if not required.issubset(df_fifo.columns):
         return pd.DataFrame()
+
+    # Chuẩn hóa số lượng
     df_fifo["QUANTITY"] = pd.to_numeric(df_fifo["QUANTITY"], errors="coerce").fillna(0).astype(int)
     if "REMAINING_QTY" in df_fifo.columns:
         df_fifo["REMAINING_QTY"] = pd.to_numeric(df_fifo["REMAINING_QTY"], errors="coerce").fillna(0).astype(int)
     else:
         df_fifo["REMAINING_QTY"] = df_fifo["QUANTITY"]
+
+    # Chuẩn hóa ngày nhận và hạn dùng
     if "DATE_RECEIVED_DATE" in df_fifo.columns:
         df_fifo["__rcv"] = pd.to_datetime(df_fifo["DATE_RECEIVED_DATE"], errors="coerce")
     else:
@@ -523,11 +527,25 @@ def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
         df_fifo["__exp"] = pd.to_datetime(df_fifo["EXPIRY_DATE_DATE"], errors="coerce")
     else:
         df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
+
+    # 👉 Thêm bước gộp theo TOOL_NAME
+    df_fifo = (
+        df_fifo.groupby("TOOL_NAME", as_index=False)
+        .agg({
+            "QUANTITY": "sum",
+            "REMAINING_QTY": "sum",
+            "__rcv": "min",   # lấy ngày nhận sớm nhất
+            "__exp": "max"    # lấy hạn dùng muộn nhất
+        })
+    )
+
+    # Giữ nguyên logic sort ổn định
     return stable_sort_dataframe(
         df_fifo,
-        primary_columns=["__rcv", "__exp", "id"],
+        primary_columns=["__rcv", "__exp"],
         fallback_name_columns=["TOOL_NAME"],
     )
+
 
 
 def _consume_fifo_lots(df_fifo: pd.DataFrame, tool_name: str, qty_to_consume: int) -> List[Dict[str, Any]]:
