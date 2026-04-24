@@ -47,82 +47,86 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
         month_selected = int(month_anchor.month)
         year_selected = int(month_anchor.year)
 
-        st.caption("Chọn nhiều ngày trực tiếp trên lịch tháng (CN → T7).")
-        weekday_labels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
-        header_cols = st.columns(7)
-        for idx, wd in enumerate(weekday_labels):
-            with header_cols[idx]:
-                st.markdown(f"**{wd}**")
+        df_current_off = lay_du_lieu_supabase("dangkyoff_log")
+        if not df_current_off.empty:
+            df_current_off.columns = [str(c).strip().upper() for c in df_current_off.columns]
+        existing_set: set = set()
+        if not df_current_off.empty and {"NGÀY NGHỈ", "TÊN (ID)"}.issubset(df_current_off.columns):
+            existing_rows = df_current_off[
+                (df_current_off["TÊN (ID)"].astype(str).str.strip() == str(nhan_vien_off).strip())
+            ].copy()
+            if not existing_rows.empty:
+                existing_rows["DT"] = pd.to_datetime(existing_rows["NGÀY NGHỈ"], format="%d/%m/%Y", errors="coerce")
+                existing_rows = existing_rows[
+                    (existing_rows["DT"].dt.month == int(month_selected))
+                    & (existing_rows["DT"].dt.year == int(year_selected))
+                ].copy()
+                existing_set = set(existing_rows["NGÀY NGHỈ"].astype(str).tolist())
 
-        month_matrix = calendar.monthcalendar(year_selected, month_selected)
-        ngay_chon_roi_rac: List[str] = []
-        for week_idx, week_days in enumerate(month_matrix):
-            week_cols = st.columns(7)
-            for day_idx, day in enumerate(week_days):
-                with week_cols[day_idx]:
-                    if day <= 0:
-                        st.write(" ")
+        st.caption("Bấm trực tiếp ô ngày để đăng ký (hàng của nhân sự đang chọn).")
+        days_in_month = calendar.monthrange(year_selected, month_selected)[1]
+        vi_weekday = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+        day_labels: List[str] = []
+        row_payload: Dict[str, Any] = {"NHÂN SỰ": nhan_vien_off}
+        label_to_date: Dict[str, str] = {}
+        for d in range(1, days_in_month + 1):
+            dt_day = date(year_selected, month_selected, d)
+            date_str = f"{d:02d}/{month_selected:02d}/{year_selected}"
+            label = f"{d:02d} {vi_weekday[dt_day.weekday()]}"
+            day_labels.append(label)
+            label_to_date[label] = date_str
+            row_payload[label] = date_str in existing_set
+
+        editor_df = pd.DataFrame([row_payload])
+        edited_df = st.data_editor(
+            editor_df,
+            hide_index=True,
+            use_container_width=True,
+            disabled=["NHÂN SỰ"],
+            key=f"off_matrix_editor_{nhan_vien_off}_{month_selected}_{year_selected}",
+        )
+        selected_labels = [lbl for lbl in day_labels if bool(edited_df.iloc[0].get(lbl, False))]
+        ngay_chon_roi_rac = [label_to_date[lbl] for lbl in selected_labels]
+        if ngay_chon_roi_rac:
+            st.caption(f"Đã chọn {len(ngay_chon_roi_rac)} ngày.")
+
+        loai_nghi_chung = st.selectbox(
+            "Loại nghỉ áp dụng cho các ngày mới chọn:",
+            ["Off", "Phép", "1/2 Sáng", "1/2 Chiều"],
+            key=f"off_type_common_{nhan_vien_off}_{month_selected}_{year_selected}",
+        )
+        ghi_chu_off = st.text_input("Ghi chú chung:")
+        if st.button("🚀 XÁC NHẬN ĐĂNG KÝ OFF", use_container_width=True):
+            with st.spinner("Đang lưu dữ liệu lên Supabase..."):
+                thoi_diem_now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                du_lieu_gui: List[Dict[str, Any]] = []
+                ngay_bi_trung: List[str] = []
+                for ngay_str in ngay_chon_roi_rac:
+                    if ngay_str in existing_set:
+                        ngay_bi_trung.append(ngay_str)
                         continue
-                    ngay_str = f"{day:02d}/{month_selected:02d}/{year_selected}"
-                    day_key = f"off_cal_{year_selected}_{month_selected:02d}_{day:02d}_{nhan_vien_off}"
-                    checked = st.checkbox(f"{day:02d}", key=day_key)
-                    if checked:
-                        ngay_chon_roi_rac.append(ngay_str)
-
-        if ngay_chon_roi_rac:
-            ngay_chon_roi_rac = sorted(
-                ngay_chon_roi_rac,
-                key=lambda x: datetime.strptime(x, "%d/%m/%Y"),
-            )
-            st.caption(f"Đã chọn {len(ngay_chon_roi_rac)} ngày: {', '.join(ngay_chon_roi_rac)}")
-        if ngay_chon_roi_rac:
-            st.write("📌 **Thiết lập loại nghỉ cho từng ngày:**")
-            loai_nghi_dict: Dict[str, str] = {}
-            # Mobile-friendly: 2 cột thay vì 3 để khỏi bị chật màn hình
-            cols = st.columns(2)
-            for idx, ngay_str in enumerate(ngay_chon_roi_rac):
-                with cols[idx % 2]:
-                    loai_nghi_dict[ngay_str] = st.selectbox(
-                        f"Ngày {ngay_str}:",
-                        ["Off", "Phép", "1/2 Sáng", "1/2 Chiều"],
-                        key=f"sel_{ngay_str}_{nhan_vien_off}",
+                    du_lieu_gui.append(
+                        {
+                            "NGÀY NGHỈ": ngay_str,
+                            "TÊN (ID)": nhan_vien_off,
+                            "LÝ DO": loai_nghi_chung,
+                            "THỜI ĐIỂM ĐĂNG KÝ": thoi_diem_now,
+                            "GHI CHÚ": ghi_chu_off,
+                        }
                     )
-            ghi_chu_off = st.text_input("Ghi chú chung:")
-            if st.button("🚀 XÁC NHẬN GỬI TẤT CẢ", use_container_width=True):
-                with st.spinner("Đang lưu dữ liệu lên Supabase..."):
-                    df_current_off = lay_du_lieu_supabase("dangkyoff_log")
-                    thoi_diem_now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    du_lieu_gui: List[Dict[str, Any]] = []
-                    ngay_bi_trung: List[str] = []
-                    for ngay_str in ngay_chon_roi_rac:
-                        if not df_current_off.empty:
-                            is_exist = df_current_off[
-                                (df_current_off["NGÀY NGHỈ"].astype(str) == ngay_str)
-                                & (df_current_off["TÊN (ID)"].astype(str) == nhan_vien_off)
-                            ]
-                            if not is_exist.empty:
-                                ngay_bi_trung.append(ngay_str)
-                                continue
-                        du_lieu_gui.append(
-                            {
-                                "NGÀY NGHỈ": ngay_str,
-                                "TÊN (ID)": nhan_vien_off,
-                                "LÝ DO": loai_nghi_dict[ngay_str],
-                                "THỜI ĐIỂM ĐĂNG KÝ": thoi_diem_now,
-                                "GHI CHÚ": ghi_chu_off,
-                            }
-                        )
-                    if du_lieu_gui:
-                        if ghi_du_lieu_supabase("dangkyoff_log", du_lieu_gui):
-                            st.success(f"✅ Đã lưu thành công! (Log: {thoi_diem_now})")
-                            if ngay_bi_trung:
-                                st.warning(f"⚠️ Đã bỏ qua các ngày trùng: {', '.join(ngay_bi_trung)}")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Lỗi khi ghi vào Supabase!")
-                    elif ngay_bi_trung:
-                        st.error("Tất cả ngày đã chọn đều đã tồn tại!")
+                if du_lieu_gui:
+                    if ghi_du_lieu_supabase("dangkyoff_log", du_lieu_gui):
+                        st.success(f"✅ Đã lưu thành công! (Log: {thoi_diem_now})")
+                        if ngay_bi_trung:
+                            st.warning(f"⚠️ Đã bỏ qua các ngày đã tồn tại: {', '.join(ngay_bi_trung)}")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Lỗi khi ghi vào Supabase!")
+                elif ngay_bi_trung:
+                    st.warning("Các ngày bạn chọn đã tồn tại, không có ngày mới để lưu.")
+                else:
+                    st.warning("Bạn chưa chọn ngày nào.")
 
     with col_view:
         st.subheader("🔍 Theo dõi lịch nghỉ theo tháng")
@@ -212,31 +216,32 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
                                 st.write(f"• **{ten}**: {loai}")
 
     st.markdown("---")
-    st.subheader("🗑️ Hủy đăng ký nghỉ")
-    df_del_view = lay_du_lieu_supabase("dangkyoff_log")
-    if df_del_view.empty:
-        st.info("Không có dữ liệu để xóa.")
-        return
-    st.write("📌 Nhập mã ID từ bảng dưới đây để xóa:")
-    df_del_view.columns = [str(c).strip().upper() for c in df_del_view.columns]
-    if "NGÀY NGHỈ" in df_del_view.columns:
-        df_del_view["DT"] = pd.to_datetime(df_del_view["NGÀY NGHỈ"], format="%d/%m/%Y", errors="coerce")
-        df_del_view = df_del_view[
-            (df_del_view["DT"].dt.month == int(month_selected)) & (df_del_view["DT"].dt.year == int(year_selected))
-        ].copy()
-        df_del_view = stable_sort_dataframe(df_del_view, primary_columns=["DT", "id"], fallback_name_columns=["TÊN (ID)"])
-    st.dataframe(df_del_view.tail(10), use_container_width=True, hide_index=True)
-    col_del1, col_del2 = st.columns([1, 1])
-    with col_del1:
-        id_to_delete = st.number_input("Nhập ID cần xóa:", min_value=1, step=1, key="id_del_input")
-    with col_del2:
-        st.write(" ")
-        st.write(" ")
-        if st.button("🔥 XÁC NHẬN XÓA", use_container_width=True):
-            if xoa_dong_supabase("dangkyoff_log", int(id_to_delete)):
-                st.success(f"✅ Đã xóa thành công dòng có ID: {id_to_delete}!")
-                time.sleep(1)
-                st.rerun()
+    if st.session_state.get("user_role") == "ADMIN":
+        st.subheader("🗑️ Hủy đăng ký nghỉ (ADMIN)")
+        df_del_view = lay_du_lieu_supabase("dangkyoff_log")
+        if df_del_view.empty:
+            st.info("Không có dữ liệu để xóa.")
+            return
+        st.write("📌 Nhập mã ID từ bảng dưới đây để xóa:")
+        df_del_view.columns = [str(c).strip().upper() for c in df_del_view.columns]
+        if "NGÀY NGHỈ" in df_del_view.columns:
+            df_del_view["DT"] = pd.to_datetime(df_del_view["NGÀY NGHỈ"], format="%d/%m/%Y", errors="coerce")
+            df_del_view = df_del_view[
+                (df_del_view["DT"].dt.month == int(month_selected)) & (df_del_view["DT"].dt.year == int(year_selected))
+            ].copy()
+            df_del_view = stable_sort_dataframe(df_del_view, primary_columns=["DT", "id"], fallback_name_columns=["TÊN (ID)"])
+        st.dataframe(df_del_view.tail(10), use_container_width=True, hide_index=True)
+        col_del1, col_del2 = st.columns([1, 1])
+        with col_del1:
+            id_to_delete = st.number_input("Nhập ID cần xóa:", min_value=1, step=1, key="id_del_input")
+        with col_del2:
+            st.write(" ")
+            st.write(" ")
+            if st.button("🔥 XÁC NHẬN XÓA", use_container_width=True):
+                if xoa_dong_supabase("dangkyoff_log", int(id_to_delete)):
+                    st.success(f"✅ Đã xóa thành công dòng có ID: {id_to_delete}!")
+                    time.sleep(1)
+                    st.rerun()
 
 
 def render_tab_phan_phong(danh_sach_ten: List[str]) -> None:
