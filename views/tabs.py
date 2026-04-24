@@ -552,7 +552,12 @@ def _ensure_co_so_column(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    if "TỒN SẴN SÀNG" in out.columns:
+        out["TỒN SẴN SÀNG"] = pd.to_numeric(out["TỒN SẴN SÀNG"], errors="coerce").fillna(0).astype(int)
+    if "ĐANG HẤP" in out.columns:
+        out["ĐANG HẤP"] = pd.to_numeric(out["ĐANG HẤP"], errors="coerce").fillna(0).astype(int)
     if "CƠ SỐ" in out.columns:
+        out["CƠ SỐ"] = pd.to_numeric(out["CƠ SỐ"], errors="coerce").fillna(0).astype(int)
         return out
     normalized_map = {_normalize_text_key(col): col for col in out.columns}
     for key in ("coso", "dinhmuc", "basestock"):
@@ -888,9 +893,9 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             if ton_san_sang <= 0:
                                 st.warning(f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap.")
                                 continue
-                            st.warning(
-                                f"⚠️ `{tool_selected}` chưa có lô ready/sẵn sàng trong kho_lo_hap. "
-                                "Hệ thống sẽ xuất theo tồn sẵn sàng."
+                            st.info(
+                                f"ℹ️ `{tool_selected}` chưa có dữ liệu lô ready/sẵn sàng trong kho_lo_hap. "
+                                "Hệ thống vẫn xuất theo tồn sẵn sàng hiện có."
                             )
                             qty_take = st.number_input(
                                 f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
@@ -917,9 +922,9 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             if ton_san_sang <= 0:
                                 st.warning(f"⚠️ `{tool_selected}` không còn số lượng khả dụng theo lô.")
                                 continue
-                            st.warning(
-                                f"⚠️ `{tool_selected}` chưa có lô ready/sẵn sàng khả dụng. "
-                                "Hệ thống sẽ xuất theo tồn sẵn sàng."
+                            st.info(
+                                f"ℹ️ `{tool_selected}` chưa có lô ready/sẵn sàng khả dụng. "
+                                "Hệ thống vẫn xuất theo tồn sẵn sàng hiện có."
                             )
                             qty_take = st.number_input(
                                 f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
@@ -1452,13 +1457,16 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         df_dm = _ensure_co_so_column(df_dm)
 
         # Ưu tiên hiển thị cột CƠ SỐ nếu Supabase đã có sẵn.
+        for numeric_col in ("CƠ SỐ", "TỒN SẴN SÀNG", "ĐANG HẤP"):
+            if numeric_col in df_dm.columns:
+                df_dm[numeric_col] = pd.to_numeric(df_dm[numeric_col], errors="coerce").fillna(0).astype(int)
         has_co_so = "CƠ SỐ" in df_dm.columns
         has_ton_san_sang = "TỒN SẴN SÀNG" in df_dm.columns
         has_dang_hap = "ĐANG HẤP" in df_dm.columns
 
         show_4_cols = st.checkbox(
             "Hiện thêm cột Tồn sẵn sàng (gọn trên điện thoại vẫn xem được)",
-            value=False,
+            value=True,
             key="kho_report_show4",
         )
 
