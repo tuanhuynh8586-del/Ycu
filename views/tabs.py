@@ -146,6 +146,64 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
                 if df_month.empty:
                     st.info("Tháng đang chọn chưa có ai đăng ký.")
                 else:
+                    st.markdown("#### 🗓️ Ma trận đăng ký OFF theo tháng")
+                    staff_source = df_nhan_su_full.copy()
+                    if not staff_source.empty and "TRẠNG THÁI" in staff_source.columns:
+                        staff_source = staff_source[staff_source["TRẠNG THÁI"].astype(str).str.upper() == "ĐANG LÀM"].copy()
+                    if not staff_source.empty and "TÊN" in staff_source.columns:
+                        staff_list = [str(x).strip() for x in staff_source["TÊN"].tolist() if str(x).strip()]
+                    else:
+                        staff_list = [str(x).strip() for x in danh_sach_ten if str(x).strip()]
+
+                    days_in_month = calendar.monthrange(year_selected, month_selected)[1]
+                    day_cols = [f"{d:02d}" for d in range(1, days_in_month + 1)]
+                    matrix_df = pd.DataFrame("", index=staff_list, columns=day_cols)
+
+                    # Ký hiệu: O=Off, P=Phép, S=1/2 Sáng, C=1/2 Chiều
+                    reason_map = {
+                        "off": "O",
+                        "phep": "P",
+                        "12sang": "S",
+                        "12chieu": "C",
+                    }
+
+                    # Nhóm theo người/ngày để hiển thị ký hiệu trong ma trận
+                    for _, r in df_month.iterrows():
+                        ten = str(r.get(c_t, "")).strip()
+                        dt_val = r.get("DT")
+                        if ten == "" or pd.isna(dt_val):
+                            continue
+                        dkey = f"{int(dt_val.day):02d}"
+                        reason_key = _normalize_text_key(r.get(c_l, ""))
+                        symbol = reason_map.get(reason_key, "X")
+                        if ten in matrix_df.index and dkey in matrix_df.columns:
+                            current = str(matrix_df.at[ten, dkey]).strip()
+                            matrix_df.at[ten, dkey] = symbol if current == "" else f"{current},{symbol}"
+
+                    # Header cột có kèm thứ để dễ nhìn (vd: 05 T2)
+                    col_labels: Dict[str, str] = {}
+                    weekend_labels: List[str] = []
+                    vi_weekday = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+                    for d in range(1, days_in_month + 1):
+                        dt_day = date(year_selected, month_selected, d)
+                        label = f"{d:02d} {vi_weekday[dt_day.weekday()]}"
+                        key = f"{d:02d}"
+                        col_labels[key] = label
+                        if dt_day.weekday() >= 5:
+                            weekend_labels.append(label)
+                    matrix_view = matrix_df.rename(columns=col_labels)
+                    if not matrix_view.empty:
+                        matrix_view.insert(0, "OFF", matrix_view.index)
+                        matrix_view = matrix_view.reset_index(drop=True)
+                        st.dataframe(
+                            matrix_view,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        if weekend_labels:
+                            st.caption(f"Cột cuối tuần: {', '.join(weekend_labels)}")
+                        st.caption("Ký hiệu: O=Off, P=Phép, S=1/2 Sáng, C=1/2 Chiều, X=khác.")
+
                     df_month = stable_sort_dataframe(df_month, primary_columns=["DT"], fallback_name_columns=[c_t, c_l])
                     summary = df_month.groupby(c_n, sort=False).agg({c_t: list, c_l: list}).reset_index()
                     for _, row in summary.iterrows():
