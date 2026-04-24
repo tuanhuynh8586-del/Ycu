@@ -1,5 +1,6 @@
 import calendar
 import time
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -532,6 +533,33 @@ def _parse_date_safe(value: Any) -> Optional[date]:
     return dt.date()
 
 
+def _normalize_text_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
+    for ch in ("_", "-", ".", "/", " "):
+        text = text.replace(ch, "")
+    return text
+
+
+def _ensure_co_so_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    if "CƠ SỐ" in out.columns:
+        return out
+    normalized_map = {_normalize_text_key(col): col for col in out.columns}
+    for key in ("coso", "dinhmuc", "basestock"):
+        if key in normalized_map:
+            out["CƠ SỐ"] = pd.to_numeric(out[normalized_map[key]], errors="coerce").fillna(0).astype(int)
+            return out
+    if {"TỒN SẴN SÀNG", "ĐANG HẤP"}.issubset(out.columns):
+        out["CƠ SỐ"] = (
+            pd.to_numeric(out["TỒN SẴN SÀNG"], errors="coerce").fillna(0)
+            + pd.to_numeric(out["ĐANG HẤP"], errors="coerce").fillna(0)
+        ).astype(int)
+    return out
+
+
 def _normalize_fifo_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -771,6 +799,7 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
+    df_dm = _ensure_co_so_column(df_dm)
     df_nk = _normalize_kho_columns(lay_du_lieu_supabase("kho_nhatky"))
     df_dm = _ensure_tool_name_column(df_dm)
     df_nk = _ensure_tool_name_column(df_nk)
@@ -846,15 +875,64 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
                     for tool_selected in selected_tools:
                         fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
+                        selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
+                        ton_san_sang = 0
+                        if not selected_dm.empty:
+                            ton_san_sang = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0), errors="coerce"))
+
                         if fefo_df.empty or not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(fefo_df.columns):
-                            st.warning(f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap.")
+                            if ton_san_sang <= 0:
+                                st.warning(f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap.")
+                                continue
+                            st.warning(
+                                f"⚠️ `{tool_selected}` chưa có lô ready trong kho_lo_hap. "
+                                "Hệ thống sẽ xuất theo tồn sẵn sàng."
+                            )
+                            qty_take = st.number_input(
+                                f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
+                                min_value=1,
+                                max_value=max(1, int(ton_san_sang)),
+                                value=1,
+                                step=1,
+                                key=f"bulk_qty_nobatch_{tool_selected}",
+                            )
+                            bulk_plan.append(
+                                {
+                                    "tool_name": tool_selected,
+                                    "fefo_df": pd.DataFrame(),
+                                    "qty": int(qty_take),
+                                    "use_batch": False,
+                                }
+                            )
                             continue
 
                         fefo_df = fefo_df.copy()
                         fefo_df["SO_LUONG"] = pd.to_numeric(fefo_df["SO_LUONG"], errors="coerce").fillna(0).astype(int)
                         fefo_df = fefo_df[fefo_df["SO_LUONG"] > 0].copy()
                         if fefo_df.empty:
-                            st.warning(f"⚠️ `{tool_selected}` không còn số lượng khả dụng theo lô.")
+                            if ton_san_sang <= 0:
+                                st.warning(f"⚠️ `{tool_selected}` không còn số lượng khả dụng theo lô.")
+                                continue
+                            st.warning(
+                                f"⚠️ `{tool_selected}` chưa đồng bộ lô khả dụng. "
+                                "Hệ thống sẽ xuất theo tồn sẵn sàng."
+                            )
+                            qty_take = st.number_input(
+                                f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
+                                min_value=1,
+                                max_value=max(1, int(ton_san_sang)),
+                                value=1,
+                                step=1,
+                                key=f"bulk_qty_nobatch2_{tool_selected}",
+                            )
+                            bulk_plan.append(
+                                {
+                                    "tool_name": tool_selected,
+                                    "fefo_df": pd.DataFrame(),
+                                    "qty": int(qty_take),
+                                    "use_batch": False,
+                                }
+                            )
                             continue
 
                         if "HAN_DUNG_DATE" in fefo_df.columns:
@@ -890,6 +968,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             "tool_name": tool_selected,
                             "fefo_df": fefo_df, 
                             "qty": int(qty_take),
+                            "use_batch": True,
                         })
                         # --- HẾT PHẦN SỬA ---
 
@@ -902,18 +981,21 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 tool_selected = item["tool_name"]
                                 qty_can_lay = item["qty"]
                                 fefo_df = item["fefo_df"]
+                                use_batch = bool(item.get("use_batch", True))
                                 
-                                # Tự động trừ lô FEFO
-                                for _, row in fefo_df.iterrows():
-                                    if qty_can_lay <= 0: break
-                                    
-                                    batch_id = int(row.get("id", row.get("ID")))
-                                    sl_lo_kha_dung = int(row["SO_LUONG"])
-                                    sl_lay_lo_nay = min(qty_can_lay, sl_lo_kha_dung)
-                                    
-                                    if sl_lay_lo_nay > 0:
-                                        deduct_batch(batch_id, sl_lay_lo_nay)
-                                        qty_can_lay -= sl_lay_lo_nay
+                                if use_batch and not fefo_df.empty:
+                                    # Tự động trừ lô FEFO
+                                    for _, row in fefo_df.iterrows():
+                                        if qty_can_lay <= 0:
+                                            break
+
+                                        batch_id = int(row.get("id", row.get("ID")))
+                                        sl_lo_kha_dung = int(row["SO_LUONG"])
+                                        sl_lay_lo_nay = min(qty_can_lay, sl_lo_kha_dung)
+
+                                        if sl_lay_lo_nay > 0:
+                                            deduct_batch(batch_id, sl_lay_lo_nay)
+                                            qty_can_lay -= sl_lay_lo_nay
                                 
                                 # Ghi log và trừ tồn kho (GIỮ NGUYÊN LOGIC CŨ CỦA ANH)
                                 log_usage(tool_selected, None, item["qty"], nv_l)
@@ -1363,12 +1445,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
             if fallback_tool_cols:
                 df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[fallback_tool_cols[0]].astype(str)
-        # Nếu thiếu CƠ SỐ, tạo cột suy diễn để không mất báo cáo.
-        if "CƠ SỐ" not in df_dm.columns and {"TỒN SẴN SÀNG", "ĐANG HẤP"}.issubset(df_dm.columns):
-            df_dm["CƠ SỐ"] = (
-                pd.to_numeric(df_dm["TỒN SẴN SÀNG"], errors="coerce").fillna(0)
-                + pd.to_numeric(df_dm["ĐANG HẤP"], errors="coerce").fillna(0)
-            ).astype(int)
+        df_dm = _ensure_co_so_column(df_dm)
 
         # Ưu tiên hiển thị cột CƠ SỐ nếu Supabase đã có sẵn.
         has_co_so = "CƠ SỐ" in df_dm.columns
