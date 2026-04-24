@@ -423,19 +423,66 @@ def _normalize_kho_columns(df: pd.DataFrame) -> pd.DataFrame:
     result.columns = [str(c).strip() for c in result.columns]
     rename_dict: Dict[str, str] = {}
     for col in result.columns:
-        c_up = col.upper()
-        if "TÊN BỘ" in c_up or c_up in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ"):
+        c_up = str(col).strip().upper()
+        if c_up in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ", "TÊN BỘ DỤNG CỤ") or "TÊN BỘ" in c_up:
             rename_dict[col] = "TÊN BỘ DỤNG CỤ"
-        if "TỒN" in c_up:
+        elif "TỒN" in c_up or c_up in ("TON_SAN_SANG", "TON_SAN", "TON"):
             rename_dict[col] = "TỒN SẴN SÀNG"
-        if "ĐANG HẤP" in c_up:
+        elif "ĐANG HẤP" in c_up or c_up == "DANG HAP":
             rename_dict[col] = "ĐANG HẤP"
-        if "TÌNH TRẠNG" in c_up:
+        elif c_up in ("TÌNH TRẠNG", "TRANG THAI", "STATUS"):
             rename_dict[col] = "TÌNH TRẠNG"
-        if "SỐ LƯỢNG" in c_up:
+        elif c_up in ("SỐ LƯỢNG", "SO LUONG", "SO_LUONG", "QUANTITY"):
             rename_dict[col] = "SỐ LƯỢNG"
     result = result.rename(columns=rename_dict)
     return result
+
+
+def _ensure_tool_name_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if "TÊN BỘ DỤNG CỤ" not in df.columns:
+        for alt in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ"):
+            if alt in df.columns:
+                df["TÊN BỘ DỤNG CỤ"] = df[alt].astype(str)
+                break
+    return df
+
+
+def _group_duplicate_tool_rows(df: pd.DataFrame, tool_col: str = "TÊN BỘ DỤNG CỤ") -> pd.DataFrame:
+    if df.empty or tool_col not in df.columns:
+        return df
+    agg_map: Dict[str, Any] = {}
+    for col in df.columns:
+        if col == tool_col:
+            agg_map[col] = "first"
+        elif pd.api.types.is_numeric_dtype(df[col].dtype):
+            agg_map[col] = "sum"
+        else:
+            agg_map[col] = "first"
+    return df.groupby(tool_col, as_index=False).agg(agg_map)
+
+
+def _group_tool_log_view(
+    df: pd.DataFrame,
+    tool_cols: List[str],
+    qty_cols: List[str],
+    date_cols: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    tool_col = next((c for c in tool_cols if c in df.columns), None)
+    qty_col = next((c for c in qty_cols if c in df.columns), None)
+    date_col = next((c for c in (date_cols or []) if c in df.columns), None)
+    if tool_col is None or qty_col is None:
+        return df
+    agg_map: Dict[str, Any] = {tool_col: "first", qty_col: "sum"}
+    if date_col:
+        agg_map[date_col] = "first"
+    grouped = df.groupby(tool_col, as_index=False).agg(agg_map)
+    if date_col:
+        return grouped[[tool_col, qty_col, date_col]]
+    return grouped[[tool_col, qty_col]]
 
 
 def _parse_datetime_safe(value: Any) -> pd.Timestamp:
@@ -691,6 +738,8 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
     df_nk = _normalize_kho_columns(lay_du_lieu_supabase("kho_nhatky"))
+    df_dm = _ensure_tool_name_column(df_dm)
+    df_nk = _ensure_tool_name_column(df_nk)
     if df_dm.empty:
         st.warning("⚠️ Lỗi hệ thống: Không có dữ liệu kho_danhmuc.")
         return
@@ -706,8 +755,10 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     df_nhan_ve_log_raw = lay_du_lieu_supabase("kho_nhan_ve_log")
     df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
     df_batches = _normalize_batch_columns(lay_du_lieu_supabase("kho_lo_hap"))
+    if "TÊN BỘ DỤNG CỤ" not in df_batches.columns and "TEN_DUNG_CU" in df_batches.columns:
+        df_batches["TÊN BỘ DỤNG CỤ"] = df_batches["TEN_DUNG_CU"].astype(str)
 
-    df_holding = df_nk[df_nk["TÌNH TRẠNG"] == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
+    df_holding = df_nk[df_nk.get("TÌNH TRẠNG", "") == "Đang giữ"] if not df_nk.empty else pd.DataFrame()
 
     def make_super_label(row: pd.Series) -> str:
         mon = row.get("TÊN BỘ DỤNG CỤ", "N/A")
@@ -910,11 +961,12 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     r_id = row.get("id", row.get("ID", index))
                     with st.container(border=True):
                         ci, cq, cb = st.columns([2, 1, 1])
-                        txt_tt = "🟢 Đang giữ" if row["TÌNH TRẠNG"] == "Đang giữ" else "🟡 Chờ hấp"
-                        ci.write(f"{txt_tt} | **{row['NHÂN VIÊN']}**\n\n{row['TÊN BỘ DỤNG CỤ']}")
-                        n_qty = cq.number_input("Số", 0, 100, int(row["SỐ LƯỢNG"]), key=f"ed_{index}")
+                        txt_tt = "🟢 Đang giữ" if row.get("TÌNH TRẠNG", "") == "Đang giữ" else "🟡 Chờ hấp"
+                        ci.write(f"{txt_tt} | **{row.get('NHÂN VIÊN', '')}**\n\n{row.get('TÊN BỘ DỤNG CỤ', row.get('TEN_DUNG_CU', row.get('TOOL_NAME', '')))}")
+                        n_qty = cq.number_input("Số", 0, 100, int(row.get("SỐ LƯỢNG", 0)), key=f"ed_{index}")
                         if cb.button("CHỐT", key=f"btn_{index}"):
-                            r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == row["TÊN BỘ DỤNG CỤ"]].iloc[0].to_dict()
+                            tool_name_for_row = row.get("TÊN BỘ DỤNG CỤ", row.get("TEN_DUNG_CU", row.get("TOOL_NAME", "")))
+                            r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row].iloc[0].to_dict()
                             dm_id = r_dm.get("id", r_dm.get("ID"))
                             diff = n_qty - int(row["SỐ LƯỢNG"])
                             ghi_du_lieu_supabase(
@@ -985,13 +1037,17 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 st.rerun()
 
         if not cho_g.empty:
-            st.dataframe(cho_g[["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"]], use_container_width=True)
+            display_cho_g = cho_g.copy()
+            if {"NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"}.issubset(display_cho_g.columns):
+                display_cho_g = display_cho_g.groupby(["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ"], as_index=False)["SỐ LƯỢNG"].sum()
+            st.dataframe(display_cho_g[["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"]], use_container_width=True)
             if st.button("🚀 XÁC NHẬN GỬI TOÀN BỘ"):
                 ds_sum = cho_g.groupby("TÊN BỘ DỤNG CỤ")["SỐ LƯỢNG"].sum().reset_index()
                 time_sent = datetime.now()
                 sent_rows: List[Dict[str, Any]] = []
                 for _, row in ds_sum.iterrows():
-                    r_dm_u = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == row["TÊN BỘ DỤNG CỤ"]].iloc[0].to_dict()
+                    tool_name_for_row = row.get("TÊN BỘ DỤNG CỤ", row.get("TEN_DUNG_CU", row.get("TOOL_NAME", "")))
+                    r_dm_u = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row].iloc[0].to_dict()
                     id_u = r_dm_u.get("id", r_dm_u.get("ID"))
                     ghi_du_lieu_supabase(
                         "kho_danhmuc",
@@ -1047,6 +1103,13 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             if view_send.empty:
                 st.caption("Không có dữ liệu gửi hấp trong ngày đã chọn.")
             else:
+                view_send = _group_tool_log_view(
+                    view_send,
+                    tool_cols=["TOOL_NAME", "TÊN BỘ DỤNG CỤ"],
+                    qty_cols=["QUANTITY_SENT", "SỐ LƯỢNG"],
+                    date_cols=["TIMESTAMP_SENT", "NGÀY GIỜ"],
+                )
+                show_cols = [c for c in ["TOOL_NAME", "TÊN BỘ DỤNG CỤ", "QUANTITY_SENT", "SỐ LƯỢNG", "TIMESTAMP_SENT", "NGÀY GIỜ"] if c in view_send.columns]
                 st.dataframe(view_send[show_cols], use_container_width=True, hide_index=True)
         else:
             df_send_fallback = _build_send_log_from_nhatky(df_nk)
@@ -1061,8 +1124,14 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 if view_fb.empty:
                     st.caption("Không có dữ liệu gửi hấp trong ngày đã chọn.")
                 else:
+                    view_fb = _group_tool_log_view(
+                        view_fb,
+                        tool_cols=["TOOL_NAME"],
+                        qty_cols=["QUANTITY_SENT"],
+                        date_cols=["TIMESTAMP_SENT"],
+                    )
                     st.dataframe(
-                        view_fb[["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"]],
+                        view_fb[[c for c in ["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"] if c in view_fb.columns]],
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -1249,6 +1318,14 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             st.caption("Không tìm thấy cột để hiển thị báo cáo kho.")
         else:
             view_dm = df_dm[base_cols].copy()
+            # Gộp các dòng cùng tên dụng cụ nếu Supabase trả về nhiều dòng giống nhau.
+            if "TÊN BỘ DỤNG CỤ" in view_dm.columns:
+                sum_cols = [c for c in view_dm.columns if c not in ("TÊN BỘ DỤNG CỤ", "GHI CHÚ") and pd.api.types.is_numeric_dtype(view_dm[c].dtype)]
+                if sum_cols:
+                    agg_map: Dict[str, Any] = {"TÊN BỘ DỤNG CỤ": "first"}
+                    agg_map.update({c: "sum" for c in sum_cols})
+                    view_dm = view_dm.groupby("TÊN BỘ DỤNG CỤ", as_index=False).agg(agg_map)
+
             # Nếu dùng fallback "TỒN SẴN SÀNG" thay cho CƠ SỐ thì đổi nhãn hiển thị cho đúng ý nghĩa
             if (not has_co_so) and ("TỒN SẴN SÀNG" in view_dm.columns) and (not show_4_cols):
                 view_dm = view_dm.rename(columns={"TỒN SẴN SÀNG": "CƠ SỐ"})
