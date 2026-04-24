@@ -514,6 +514,29 @@ def _group_tool_log_view(
     return grouped[[tool_col, qty_col]]
 
 
+def _sort_by_kho_danhmuc_order(
+    df: pd.DataFrame,
+    df_dm: pd.DataFrame,
+    tool_cols: List[str],
+) -> pd.DataFrame:
+    if df.empty or df_dm.empty:
+        return df
+    dm_tool_col = "TÊN BỘ DỤNG CỤ" if "TÊN BỘ DỤNG CỤ" in df_dm.columns else None
+    if dm_tool_col is None:
+        dm_tool_col = next((c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns), None)
+    src_tool_col = next((c for c in tool_cols if c in df.columns), None)
+    if dm_tool_col is None or src_tool_col is None:
+        return df
+
+    ordered_names = [str(x) for x in df_dm[dm_tool_col].astype(str).tolist() if str(x).strip()]
+    order_map = {_normalize_text_key(name): idx for idx, name in enumerate(ordered_names)}
+    out = df.copy()
+    out["__ROW_ORDER"] = range(len(out))
+    out["__DM_ORDER"] = out[src_tool_col].apply(lambda x: order_map.get(_normalize_text_key(x), 10**9))
+    out = out.sort_values(by=["__DM_ORDER", "__ROW_ORDER"], kind="stable")
+    return out.drop(columns=["__DM_ORDER", "__ROW_ORDER"], errors="ignore")
+
+
 def _parse_datetime_safe(value: Any) -> pd.Timestamp:
     if value is None or str(value).strip() == "":
         return pd.NaT
@@ -1142,6 +1165,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         with c2:
             st.subheader("📝 Chốt dùng")
             df_sua = df_nk[df_nk["TÌNH TRẠNG"].isin(["Đang giữ", "Chờ đi hấp"])] if not df_nk.empty else pd.DataFrame()
+            df_sua = _sort_by_kho_danhmuc_order(df_sua, df_dm, ["TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU", "TOOL_NAME"])
             if df_sua.empty:
                 st.info("Trống.")
             else:
@@ -1290,6 +1314,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             display_cho_g = cho_g.copy()
             if {"NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"}.issubset(display_cho_g.columns):
                 display_cho_g = display_cho_g.groupby(["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ"], as_index=False)["SỐ LƯỢNG"].sum()
+            display_cho_g = _sort_by_kho_danhmuc_order(display_cho_g, df_dm, ["TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU", "TOOL_NAME"])
             st.dataframe(display_cho_g[["NHÂN VIÊN", "TÊN BỘ DỤNG CỤ", "SỐ LƯỢNG"]], use_container_width=True)
             if st.button("🚀 XÁC NHẬN GỬI TOÀN BỘ"):
                 ds_sum = cho_g.groupby("TÊN BỘ DỤNG CỤ")["SỐ LƯỢNG"].sum().reset_index()
@@ -1363,6 +1388,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     qty_cols=["QUANTITY_SENT", "SỐ LƯỢNG"],
                     date_cols=["TIMESTAMP_SENT", "NGÀY GIỜ"],
                 )
+                view_send = _sort_by_kho_danhmuc_order(view_send, df_dm, ["TOOL_NAME", "TÊN BỘ DỤNG CỤ"])
                 show_cols = [c for c in ["TOOL_NAME", "TÊN BỘ DỤNG CỤ", "QUANTITY_SENT", "SỐ LƯỢNG", "TIMESTAMP_SENT", "NGÀY GIỜ"] if c in view_send.columns]
                 st.dataframe(view_send[show_cols], use_container_width=True, hide_index=True)
         else:
@@ -1384,6 +1410,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         qty_cols=["QUANTITY_SENT"],
                         date_cols=["TIMESTAMP_SENT"],
                     )
+                    view_fb = _sort_by_kho_danhmuc_order(view_fb, df_dm, ["TOOL_NAME", "TÊN BỘ DỤNG CỤ"])
                     st.dataframe(
                         view_fb[[c for c in ["TOOL_NAME", "QUANTITY_SENT", "TIMESTAMP_SENT"] if c in view_fb.columns]],
                         use_container_width=True,
@@ -1544,6 +1571,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
                     view_recv_grouped = view_recv.groupby("_TEMP_NAME", as_index=False).agg(agg_map)
                     view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
+                    view_recv_grouped = _sort_by_kho_danhmuc_order(
+                        view_recv_grouped,
+                        df_dm,
+                        [col_ten, "TOOL_NAME", "TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU"],
+                    )
 
                     # 4) Hiển thị.
                     display_cols = [col_ten, col_sl]
