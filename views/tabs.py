@@ -1168,7 +1168,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
                         if not any_failed:
                             st.rerun()
-        st.markdown("### Lịch sử nhận về theo ngày")
+                st.markdown("### Lịch sử nhận về theo ngày")
                 if df_nhan_ve_log.empty:
                     st.caption("Chưa có dữ liệu nhận về.")
                 else:
@@ -1212,6 +1212,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             use_container_width=True,
                             hide_index=True,
                         )
+
 
     with t4:
         st.subheader("📊 Báo cáo kho")
