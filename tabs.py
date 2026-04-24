@@ -1194,10 +1194,16 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 )
 
                 # Sắp xếp lại cho đẹp
-                view_recv_grouped = stable_sort_dataframe(
-                    view_recv_grouped,
-                    primary_columns=["DATE_RECEIVED", "EXPIRY_DATE"],
-                    fallback_name_columns=["TOOL_NAME"],
+                # Cách ép gộp cực đoan
+                # Chỉ lấy ra những cột cần hiển thị và gộp dứt khoát
+                view_recv_grouped = (
+                    view_recv.groupby("TOOL_NAME", as_index=False)
+                    .agg({
+                        "QUANTITY": "sum",
+                        "REMAINING_QTY": "sum",
+                        "DATE_RECEIVED": "first", # Chỉ lấy giá trị của dòng đầu tiên
+                        "EXPIRY_DATE": "first"    # Chỉ lấy giá trị của dòng đầu tiên
+                    })
                 )
 
                 # Hiển thị bảng đã gộp sạch sẽ
