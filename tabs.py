@@ -1174,30 +1174,33 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
         else:
             view_recv = df_nhan_ve_log.copy()
             view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
-            # `st.date_input` trả về `datetime.date`
             view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
+            
             if view_recv.empty:
                 st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
             else:
-                # 👉 Gộp theo TOOL_NAME để hiển thị gọn
+                # Gộp nhóm để hiển thị 1 dòng cho mỗi bộ dụng cụ
+                # Ép kiểu dữ liệu để đảm bảo gộp chính xác
+                view_recv["TOOL_NAME"] = view_recv["TOOL_NAME"].astype(str).str.strip()
+                
                 view_recv_grouped = (
                     view_recv.groupby("TOOL_NAME", as_index=False)
                     .agg({
                         "QUANTITY": "sum",
                         "REMAINING_QTY": "sum",
-                        "DATE_RECEIVED": "min",   # ngày nhận sớm nhất trong ngày
-                        "EXPIRY_DATE": "max"      # hạn dùng muộn nhất
+                        "DATE_RECEIVED": "min",
+                        "EXPIRY_DATE": "max"
                     })
                 )
 
-                # Sắp xếp ổn định
+                # Sắp xếp lại cho đẹp
                 view_recv_grouped = stable_sort_dataframe(
                     view_recv_grouped,
                     primary_columns=["DATE_RECEIVED", "EXPIRY_DATE"],
                     fallback_name_columns=["TOOL_NAME"],
                 )
 
-                # Hiển thị bảng đã gộp
+                # Hiển thị bảng đã gộp sạch sẽ
                 st.dataframe(
                     view_recv_grouped[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
                     use_container_width=True,
