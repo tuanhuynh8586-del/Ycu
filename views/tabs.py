@@ -453,13 +453,14 @@ def _safe_merge_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     result = df.copy()
-    duplicates = [col for col in result.columns if list(result.columns).count(col) > 1]
+    columns = list(result.columns)
+    duplicates = [col for idx, col in enumerate(columns) if col in columns[:idx]]
     for dup in set(duplicates):
-        dup_cols = [c for c in result.columns if c == dup]
-        if len(dup_cols) <= 1:
+        dup_locs = [idx for idx, col in enumerate(columns) if col == dup]
+        if len(dup_locs) <= 1:
             continue
-        work = result[dup_cols]
-        if all(pd.api.types.is_numeric_dtype(work[c].dtype) for c in dup_cols):
+        work = result.iloc[:, dup_locs]
+        if all(pd.api.types.is_numeric_dtype(work.iloc[:, idx].dtype) for idx in range(work.shape[1])):
             result[dup] = work.apply(pd.to_numeric, errors="coerce").sum(axis=1, skipna=True).fillna(0)
         else:
             def first_nonempty(values: pd.Series) -> Any:
@@ -468,8 +469,9 @@ def _safe_merge_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
                         return value
                 return ""
             result[dup] = work.apply(first_nonempty, axis=1)
-        drop_cols = dup_cols[1:]
+        drop_cols = [columns[i] for i in dup_locs[1:]]
         result = result.drop(columns=drop_cols, errors="ignore")
+        columns = list(result.columns)
     return result.loc[:, ~result.columns.duplicated()]
 
 
