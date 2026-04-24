@@ -642,20 +642,10 @@ def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
     else:
         df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
 
-    # 👉 Gộp theo TOOL_NAME, bỏ id để tránh tách dòng
-    df_fifo_grouped = (
-        df_fifo.groupby("TOOL_NAME", as_index=False)
-        .agg({
-            "QUANTITY": "sum",
-            "REMAINING_QTY": "sum",
-            "__rcv": "min",   # ngày nhận sớm nhất
-            "__exp": "max"    # hạn dùng muộn nhất
-        })
-    )
-
-    # Sort ổn định
+    # Không gộp sớm theo TOOL_NAME, vì màn lịch sử còn lọc theo ngày.
+    # Nếu gộp trước sẽ làm mất các lần nhận sau (ví dụ cùng dụng cụ nhận nhiều ngày).
     return stable_sort_dataframe(
-        df_fifo_grouped,
+        df_fifo,
         primary_columns=["__rcv", "__exp"],
         fallback_name_columns=["TOOL_NAME"],
     )
@@ -1155,6 +1145,60 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             if df_sua.empty:
                 st.info("Trống.")
             else:
+                if st.button("CHỐT TẤT CẢ", key="btn_chot_tat_ca", use_container_width=True):
+                    # 1) Đọc số lượng đã nhập cho từng dòng.
+                    rows_payload: List[Dict[str, Any]] = []
+                    delta_by_tool: Dict[str, int] = {}
+                    for index, row in df_sua.iterrows():
+                        r_id = row.get("id", row.get("ID", index))
+                        tool_name_for_row = row.get("TÊN BỘ DỤNG CỤ", row.get("TEN_DUNG_CU", row.get("TOOL_NAME", "")))
+                        old_qty = int(pd.to_numeric(row.get("SỐ LƯỢNG", 0), errors="coerce"))
+                        new_qty = int(st.session_state.get(f"ed_{index}", old_qty))
+                        diff = new_qty - old_qty
+                        rows_payload.append(
+                            {
+                                "id": int(r_id),
+                                "tool_name": str(tool_name_for_row),
+                                "new_qty": int(new_qty),
+                            }
+                        )
+                        delta_by_tool[str(tool_name_for_row)] = delta_by_tool.get(str(tool_name_for_row), 0) + int(diff)
+
+                    # 2) Cập nhật tồn theo từng dụng cụ (gộp diff để tránh trừ/cộng sai khi có nhiều dòng cùng món).
+                    any_failed = False
+                    for tool_name, total_diff in delta_by_tool.items():
+                        selected_dm_row = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name]
+                        if selected_dm_row.empty:
+                            st.error(f"Không tìm thấy `{tool_name}` trong kho_danhmuc.")
+                            any_failed = True
+                            continue
+                        r_dm = selected_dm_row.iloc[0].to_dict()
+                        dm_id = r_dm.get("id", r_dm.get("ID"))
+                        if dm_id is None:
+                            st.error(f"Không tìm thấy ID của `{tool_name}` trong kho_danhmuc.")
+                            any_failed = True
+                            continue
+                        cur_ton = int(pd.to_numeric(r_dm.get("TỒN SẴN SÀNG", 0), errors="coerce"))
+                        ok_dm = ghi_du_lieu_supabase(
+                            "kho_danhmuc",
+                            [{"id": int(dm_id), "TỒN SẴN SÀNG": max(0, cur_ton - int(total_diff))}],
+                        )
+                        if not ok_dm:
+                            any_failed = True
+
+                    # 3) Cập nhật trạng thái toàn bộ dòng nhật ký.
+                    for row_data in rows_payload:
+                        n_qty = int(row_data["new_qty"])
+                        up_data = {"id": int(row_data["id"]), "SỐ LƯỢNG": n_qty}
+                        up_data["TÌNH TRẠNG"] = "Chờ đi hấp" if n_qty > 0 else "Đã xóa/Trả kho"
+                        if not ghi_du_lieu_supabase("kho_nhatky", [up_data]):
+                            any_failed = True
+
+                    if any_failed:
+                        st.error("Chốt tất cả chưa hoàn tất. Vui lòng kiểm tra lại dữ liệu/kết nối.")
+                    else:
+                        st.rerun()
+
                 for index, row in df_sua.iterrows():
                     r_id = row.get("id", row.get("ID", index))
                     with st.container(border=True):
