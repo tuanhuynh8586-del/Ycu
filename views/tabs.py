@@ -705,7 +705,8 @@ def _build_fefo_tool_priority(df_batches: pd.DataFrame) -> pd.DataFrame:
     if work.empty:
         return pd.DataFrame()
     if "TRANG_THAI" in work.columns:
-        work = work[work["TRANG_THAI"].astype(str).str.lower() == "ready"].copy()
+        status = work["TRANG_THAI"].astype(str).str.strip().str.lower()
+        work = work[status.str.contains("ready", regex=False, na=False)].copy()
     if work.empty:
         return pd.DataFrame()
     if "HAN_DUNG_DATE" in work.columns:
@@ -742,7 +743,8 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
     if not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(work.columns):
         return pd.DataFrame()
     if "TRANG_THAI" in work.columns:
-        work = work[work["TRANG_THAI"].astype(str).str.strip().str.lower() == "ready"]
+        status = work["TRANG_THAI"].astype(str).str.strip().str.lower()
+        work = work[status.str.contains("ready", regex=False, na=False)].copy()
     tool_name_key = str(tool_name).strip().lower()
     work = work[
         work["TEN_DUNG_CU"].astype(str).str.strip().str.lower() == tool_name_key
@@ -1328,8 +1330,16 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
 
                         # 4. Hiển thị
+                        display_cols = [col_ten, col_sl]
+                        if col_sl_con is not None and col_sl_con in view_recv_grouped.columns:
+                            display_cols.append(col_sl_con)
+                        if col_ngay is not None and col_ngay in view_recv_grouped.columns:
+                            display_cols.append(col_ngay)
+                        if col_han is not None and col_han in view_recv_grouped.columns:
+                            display_cols.append(col_han)
+
                         st.dataframe(
-                            view_recv_grouped[[col_ten, col_sl, col_sl_con, col_ngay, col_han]],
+                            view_recv_grouped[display_cols],
                             use_container_width=True,
                             hide_index=True,
                         )

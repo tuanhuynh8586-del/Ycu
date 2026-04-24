@@ -331,7 +331,8 @@ def get_fefo_batches(ten_dung_cu: str) -> pd.DataFrame:
         return df
     status_col = "TRANG_THAI" if "TRANG_THAI" in df.columns else "TRẠNG THÁI" if "TRẠNG THÁI" in df.columns else ""
     if status_col:
-        df = df[df[status_col].astype(str).str.lower() == "ready"]
+        status = df[status_col].astype(str).str.strip().str.lower()
+        df = df[status.str.contains("ready", regex=False, na=False)]
     name_col = "TEN_DUNG_CU" if "TEN_DUNG_CU" in df.columns else "TÊN DỤNG CỤ" if "TÊN DỤNG CỤ" in df.columns else ""
     if name_col:
         df = df[df[name_col].astype(str) == tool_name]
