@@ -1068,7 +1068,33 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     )
 
     with t3:
-        st.subheader("📥 Nhận về kho")
+        
+        st.subheader("📥 NHẬN VỀ")
+
+        # Lấy dữ liệu gốc từ Supabase
+        df_nhan_ve_log_raw = lay_du_lieu_supabase("kho_nhan_ve_log")
+        df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
+
+        if df_nhan_ve_log.empty:
+            st.info("Không có dữ liệu nhận về.")
+        else:
+            # 👉 Gộp theo TOOL_NAME để hiển thị gọn
+            df_nhan_ve_log_grouped = (
+                df_nhan_ve_log.groupby("TOOL_NAME", as_index=False)
+                .agg({
+                    "QUANTITY": "sum",
+                    "REMAINING_QTY": "sum",
+                    "__rcv": "min",   # ngày nhận sớm nhất
+                    "__exp": "max"    # hạn dùng muộn nhất
+                })
+            )
+
+            # Hiển thị bảng đã gộp
+            st.dataframe(
+                df_nhan_ve_log_grouped[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "__rcv", "__exp"]],
+                use_container_width=True
+            )
+
         ngay_nhan = st.date_input("Ngày hấp/nhận:", value=datetime.now(), key="ngay_nhan_kho")
 
         df_dang_hap = df_dm.copy()
