@@ -49,25 +49,14 @@ def login() -> None:
         st.session_state["user_role"] = str(match.iloc[0]["ROLE"]).upper()
 
         def _set_rt_query_param(token: str) -> None:
-            # Streamlit mới: st.query_params. Streamlit cũ: experimental_set_query_params
             try:
                 st.query_params["rt"] = token
-                return
-            except Exception:
-                pass
-            try:
-                st.experimental_set_query_params(rt=token)
             except Exception:
                 pass
 
         def _clear_rt_query_param() -> None:
             try:
                 st.query_params.pop("rt", None)
-                return
-            except Exception:
-                pass
-            try:
-                st.experimental_set_query_params()
             except Exception:
                 pass
 

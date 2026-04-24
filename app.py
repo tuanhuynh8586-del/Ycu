@@ -21,17 +21,10 @@ def _get_remember_token_from_session() -> str:
 
 # Ưu tiên token từ session, fallback token từ URL query param (persist qua F5)
 def _get_remember_token_from_url() -> str:
-    raw = ""
     try:
         raw = st.query_params.get("rt", "")
     except Exception:
         raw = ""
-    if not raw:
-        try:
-            legacy = st.experimental_get_query_params()
-            raw = legacy.get("rt", [""])[0] if isinstance(legacy, dict) else ""
-        except Exception:
-            raw = ""
     if isinstance(raw, list):
         raw = raw[0] if raw else ""
     return str(raw or "").strip()
@@ -47,10 +40,6 @@ if remember_token and not st.session_state.get("logged_in", False):
         st.session_state["remember_token"] = remember_token
         try:
             st.query_params["rt"] = remember_token
-        except Exception:
-            pass
-        try:
-            st.experimental_set_query_params(rt=remember_token)
         except Exception:
             pass
 
@@ -70,15 +59,10 @@ with st.sidebar:
     st.markdown(f"### 👤 Chào {st.session_state['ho_ten']}")
     st.info(f"🔑 Quyền: **{st.session_state['user_role']}**")
     if st.button("Đăng xuất", use_container_width=True):
-        st.session_state["logged_in"] = False
         st.session_state.pop("remember_token", None)
         st.session_state.pop("REMEMBER_TOKEN", None)
         try:
             st.query_params.pop("rt", None)
-        except Exception:
-            pass
-        try:
-            st.experimental_set_query_params()
         except Exception:
             pass
         st.rerun()

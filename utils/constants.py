@@ -102,27 +102,15 @@ def _normalize_supabase_url(raw_url: str) -> str:
 
 _load_local_env_file()
 _RAW_SUPABASE_URL, _URL_SOURCE = _get_setting_with_source("SUPABASE_URL")
-_RAW_SUPABASE_ANON_KEY, _ANON_KEY_SOURCE = _get_setting_with_source("SUPABASE_KEY", "SUPABASE_ANON_KEY", "API_KEY")
-_RAW_SERVICE_ROLE_KEY, _SR_KEY_SOURCE = _get_setting_with_source(
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "SERVICE_ROLE_KEY",
-    "SUPABASE_SERVICE_KEY",
-)
+_RAW_SUPABASE_KEY, _KEY_SOURCE = _get_setting_with_source("SUPABASE_KEY", "API_KEY")
 
 SUPABASE_URL = _normalize_supabase_url(_RAW_SUPABASE_URL)
-# Dùng 2 key tách bạch:
-# - ANON key: đọc dữ liệu (và ghi nếu bạn đã mở policy)
-# - SERVICE ROLE key: chỉ dùng server-side để ghi (bypass RLS)
-SUPABASE_ANON_KEY = _RAW_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY = _RAW_SERVICE_ROLE_KEY
+SUPABASE_KEY = _RAW_SUPABASE_KEY
 
 SUPABASE_DEBUG_INFO = {
     "url_source": _URL_SOURCE,
-    "anon_key_source": _ANON_KEY_SOURCE,
-    "service_role_key_source": _SR_KEY_SOURCE,
+    "key_source": _KEY_SOURCE,
     "url_loaded": bool(SUPABASE_URL),
-    "anon_key_loaded": bool(SUPABASE_ANON_KEY),
-    "service_role_key_loaded": bool(SUPABASE_SERVICE_ROLE_KEY),
-    "anon_key_length": len(SUPABASE_ANON_KEY),
-    "service_role_key_length": len(SUPABASE_SERVICE_ROLE_KEY),
+    "key_loaded": bool(SUPABASE_KEY),
+    "key_length": len(SUPABASE_KEY),
 }
