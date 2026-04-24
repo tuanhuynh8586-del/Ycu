@@ -47,13 +47,34 @@ def render_tab_nhan_su_off(df_nhan_su_full: pd.DataFrame, danh_sach_ten: List[st
         month_selected = int(month_anchor.month)
         year_selected = int(month_anchor.year)
 
-        songay = calendar.monthrange(year_selected, month_selected)[1]
-        list_ngay_trong_thang = [f"{i:02d}/{month_selected:02d}/{year_selected}" for i in range(1, songay + 1)]
-        ngay_chon_roi_rac = st.multiselect(
-            "Bấm để chọn các ngày nghỉ (ví dụ: 01, 03, 06...):",
-            list_ngay_trong_thang,
-            key=f"ms_off_days_{month_selected:02d}_{year_selected}",
-        )
+        st.caption("Chọn nhiều ngày trực tiếp trên lịch tháng (CN → T7).")
+        weekday_labels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
+        header_cols = st.columns(7)
+        for idx, wd in enumerate(weekday_labels):
+            with header_cols[idx]:
+                st.markdown(f"**{wd}**")
+
+        month_matrix = calendar.monthcalendar(year_selected, month_selected)
+        ngay_chon_roi_rac: List[str] = []
+        for week_idx, week_days in enumerate(month_matrix):
+            week_cols = st.columns(7)
+            for day_idx, day in enumerate(week_days):
+                with week_cols[day_idx]:
+                    if day <= 0:
+                        st.write(" ")
+                        continue
+                    ngay_str = f"{day:02d}/{month_selected:02d}/{year_selected}"
+                    day_key = f"off_cal_{year_selected}_{month_selected:02d}_{day:02d}_{nhan_vien_off}"
+                    checked = st.checkbox(f"{day:02d}", key=day_key)
+                    if checked:
+                        ngay_chon_roi_rac.append(ngay_str)
+
+        if ngay_chon_roi_rac:
+            ngay_chon_roi_rac = sorted(
+                ngay_chon_roi_rac,
+                key=lambda x: datetime.strptime(x, "%d/%m/%Y"),
+            )
+            st.caption(f"Đã chọn {len(ngay_chon_roi_rac)} ngày: {', '.join(ngay_chon_roi_rac)}")
         if ngay_chon_roi_rac:
             st.write("📌 **Thiết lập loại nghỉ cho từng ngày:**")
             loai_nghi_dict: Dict[str, str] = {}
