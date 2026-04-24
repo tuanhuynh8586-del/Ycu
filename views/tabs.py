@@ -1271,14 +1271,35 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     view_recv = df_nhan_ve_log.copy()
                     
                     # 1. Tự động tìm tên cột (Bỏ qua viết hoa/thường)
-                    # Anh thay các chữ trong ngoặc đơn này đúng với tên cột thật trong SQL của anh
-                    col_ten = "tool_name" # ví dụ: "tool_name" hoặc "ten_dung_cu"
-                    col_sl = "quantity"   # ví dụ: "quantity" hoặc "so_luong"
-                    col_sl_con = "remaining_qty"
-                    col_ngay = "date_received"
-                    col_han = "expiry_date"
+                    col_ten = next(
+                        (c for c in ["tool_name", "TOOL_NAME", "TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU", "TÊN DỤNG CỤ"] if c in view_recv.columns),
+                        None,
+                    )
+                    col_sl = next(
+                        (c for c in ["quantity", "QUANTITY", "SỐ LƯỢNG", "SO_LUONG"] if c in view_recv.columns),
+                        None,
+                    )
+                    col_sl_con = next(
+                        (c for c in ["remaining_qty", "REMAINING_QTY", "SL_CÒN", "SL CON", "SO_LUONG_CON"] if c in view_recv.columns),
+                        None,
+                    )
+                    col_ngay = next(
+                        (c for c in ["date_received", "DATE_RECEIVED", "date_received_date", "DATE_RECEIVED_DATE", "__rcv"] if c in view_recv.columns),
+                        None,
+                    )
+                    col_han = next(
+                        (c for c in ["expiry_date", "EXPIRY_DATE", "expiry_date_date", "EXPIRY_DATE_DATE", "__exp"] if c in view_recv.columns),
+                        None,
+                    )
 
-                    view_recv["__d"] = view_recv[col_ngay].apply(_parse_datetime_safe).dt.date
+                    if col_ten is None or col_sl is None or col_ngay is None:
+                        st.warning("Không tìm thấy cột dữ liệu nhận về cần thiết (tên, số lượng hoặc ngày nhận).")
+                        return
+
+                    if col_ngay == "__rcv":
+                        view_recv["__d"] = view_recv["__rcv"].dt.date
+                    else:
+                        view_recv["__d"] = view_recv[col_ngay].apply(_parse_datetime_safe).dt.date
                     view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
                     
                     if view_recv.empty:
@@ -1287,18 +1308,16 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         # 2. XỬ LÝ VIẾT HOA/THƯỜNG Ở ĐÂY:
                         # Chuyển tên về viết thường và cắt khoảng trắng trước khi gộp
                         view_recv["_TEMP_NAME"] = view_recv[col_ten].astype(str).str.strip().str.lower()
-                        
+
                         # 3. Gộp nhóm
-                        view_recv_grouped = (
-                            view_recv.groupby("_TEMP_NAME", as_index=False)
-                            .agg({
-                                col_sl: "sum",
-                                col_sl_con: "sum",
-                                col_ngay: "first",
-                                col_han: "first"
-                            })
-                        )
-                        
+                        agg_map: Dict[str, str] = {col_sl: "sum", col_ngay: "first"}
+                        if col_sl_con is not None and col_sl_con in view_recv.columns:
+                            agg_map[col_sl_con] = "sum"
+                        if col_han is not None and col_han in view_recv.columns:
+                            agg_map[col_han] = "first"
+
+                        view_recv_grouped = view_recv.groupby("_TEMP_NAME", as_index=False).agg(agg_map)
+
                         # Đổi lại tên cột hiển thị cho đẹp
                         view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
 
