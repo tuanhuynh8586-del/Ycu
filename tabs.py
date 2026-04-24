@@ -528,23 +528,24 @@ def _build_receive_log_from_fifo(df_fifo_raw: pd.DataFrame) -> pd.DataFrame:
     else:
         df_fifo["__exp"] = df_fifo["EXPIRY_DATE"].apply(_parse_datetime_safe)
 
-    # 👉 Thêm bước gộp theo TOOL_NAME
-    df_fifo = (
+    # 👉 Gộp theo TOOL_NAME, bỏ id để tránh tách dòng
+    df_fifo_grouped = (
         df_fifo.groupby("TOOL_NAME", as_index=False)
         .agg({
             "QUANTITY": "sum",
             "REMAINING_QTY": "sum",
-            "__rcv": "min",   # lấy ngày nhận sớm nhất
-            "__exp": "max"    # lấy hạn dùng muộn nhất
+            "__rcv": "min",   # ngày nhận sớm nhất
+            "__exp": "max"    # hạn dùng muộn nhất
         })
     )
 
-    # Giữ nguyên logic sort ổn định
+    # Sort ổn định
     return stable_sort_dataframe(
-        df_fifo,
+        df_fifo_grouped,
         primary_columns=["__rcv", "__exp"],
         fallback_name_columns=["TOOL_NAME"],
     )
+
 
 
 
