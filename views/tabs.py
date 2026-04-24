@@ -435,7 +435,7 @@ def _normalize_kho_columns(df: pd.DataFrame) -> pd.DataFrame:
         elif c_up in ("SỐ LƯỢNG", "SO LUONG", "SO_LUONG", "QUANTITY"):
             rename_dict[col] = "SỐ LƯỢNG"
     result = result.rename(columns=rename_dict)
-    return result
+    return _safe_merge_duplicate_columns(result)
 
 
 def _ensure_tool_name_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -447,6 +447,30 @@ def _ensure_tool_name_column(df: pd.DataFrame) -> pd.DataFrame:
                 df["TÊN BỘ DỤNG CỤ"] = df[alt].astype(str)
                 break
     return df
+
+
+def _safe_merge_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    result = df.copy()
+    duplicates = [col for col in result.columns if list(result.columns).count(col) > 1]
+    for dup in set(duplicates):
+        dup_cols = [c for c in result.columns if c == dup]
+        if len(dup_cols) <= 1:
+            continue
+        work = result[dup_cols]
+        if all(pd.api.types.is_numeric_dtype(work[c].dtype) for c in dup_cols):
+            result[dup] = work.apply(pd.to_numeric, errors="coerce").sum(axis=1, skipna=True).fillna(0)
+        else:
+            def first_nonempty(values: pd.Series) -> Any:
+                for value in values:
+                    if pd.notna(value) and str(value).strip() != "":
+                        return value
+                return ""
+            result[dup] = work.apply(first_nonempty, axis=1)
+        drop_cols = dup_cols[1:]
+        result = result.drop(columns=drop_cols, errors="ignore")
+    return result.loc[:, ~result.columns.duplicated()]
 
 
 def _group_duplicate_tool_rows(df: pd.DataFrame, tool_col: str = "TÊN BỘ DỤNG CỤ") -> pd.DataFrame:
@@ -664,7 +688,8 @@ def _normalize_batch_columns(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[col] = "HAN_DUNG_DATE"
         elif c in ("TRANG_THAI", "TRẠNG THÁI", "STATUS"):
             rename_map[col] = "TRANG_THAI"
-    return out.rename(columns=rename_map)
+    renamed = out.rename(columns=rename_map)
+    return _safe_merge_duplicate_columns(renamed)
 
 
 def _build_fefo_tool_priority(df_batches: pd.DataFrame) -> pd.DataFrame:
