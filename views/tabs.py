@@ -922,7 +922,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                     "TÌNH TRẠNG": "Đang giữ"
                                 }])
                                 
-                                selected_dm = df_dm[df_dm["TÊN BỘ DUNG CỤ"] == tool_selected]
+                                selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
                                 if not selected_dm.empty:
                                     d_id = int(selected_dm.iloc[0].get("id", selected_dm.iloc[0].get("ID")))
                                     cur_ton = int(pd.to_numeric(selected_dm.iloc[0].get("TỒN SẴN SÀNG", 0)))
@@ -1001,7 +1001,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         n_qty = cq.number_input("Số", 0, 100, int(row.get("SỐ LƯỢNG", 0)), key=f"ed_{index}")
                         if cb.button("CHỐT", key=f"btn_{index}"):
                             tool_name_for_row = row.get("TÊN BỘ DỤNG CỤ", row.get("TEN_DUNG_CU", row.get("TOOL_NAME", "")))
-                            r_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row].iloc[0].to_dict()
+                            selected_dm_row = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row]
+                            if selected_dm_row.empty:
+                                st.error(f"Không tìm thấy `{tool_name_for_row}` trong kho_danhmuc.")
+                                continue
+                            r_dm = selected_dm_row.iloc[0].to_dict()
                             dm_id = r_dm.get("id", r_dm.get("ID"))
                             diff = n_qty - int(row["SỐ LƯỢNG"])
                             ghi_du_lieu_supabase(
@@ -1063,7 +1067,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             }
                         ],
                     )
-                    r_dm_t = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name].iloc[0].to_dict()
+                    selected_dm_row = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name]
+                    if selected_dm_row.empty:
+                        st.error(f"Không tìm thấy `{tool_name}` trong kho_danhmuc.")
+                        continue
+                    r_dm_t = selected_dm_row.iloc[0].to_dict()
                     id_t = r_dm_t.get("id", r_dm_t.get("ID"))
                     ghi_du_lieu_supabase(
                         "kho_danhmuc",
@@ -1082,7 +1090,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                 sent_rows: List[Dict[str, Any]] = []
                 for _, row in ds_sum.iterrows():
                     tool_name_for_row = row.get("TÊN BỘ DỤNG CỤ", row.get("TEN_DUNG_CU", row.get("TOOL_NAME", "")))
-                    r_dm_u = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row].iloc[0].to_dict()
+                    selected_dm_row = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_name_for_row]
+                    if selected_dm_row.empty:
+                        st.error(f"Không tìm thấy `{tool_name_for_row}` trong kho_danhmuc.")
+                        continue
+                    r_dm_u = selected_dm_row.iloc[0].to_dict()
                     id_u = r_dm_u.get("id", r_dm_u.get("ID"))
                     ghi_du_lieu_supabase(
                         "kho_danhmuc",
