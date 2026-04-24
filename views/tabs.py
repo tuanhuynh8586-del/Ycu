@@ -430,6 +430,8 @@ def _normalize_kho_columns(df: pd.DataFrame) -> pd.DataFrame:
             rename_dict[col] = "TỒN SẴN SÀNG"
         elif "ĐANG HẤP" in c_up or c_up == "DANG HAP":
             rename_dict[col] = "ĐANG HẤP"
+        elif c_up in ("CƠ SỐ", "CO SO", "CO_SO", "COSO", "BASE_STOCK", "DINH_MUC", "ĐỊNH MỨC", "DINH MUC"):
+            rename_dict[col] = "CƠ SỐ"
         elif c_up in ("TÌNH TRẠNG", "TRANG THAI", "STATUS"):
             rename_dict[col] = "TÌNH TRẠNG"
         elif c_up in ("SỐ LƯỢNG", "SO LUONG", "SO_LUONG", "QUANTITY"):
@@ -1284,77 +1286,74 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
                         if not any_failed:
                             st.rerun()
-                st.markdown("### Lịch sử nhận về theo ngày")
-                if df_nhan_ve_log.empty:
-                    st.caption("Chưa có dữ liệu nhận về.")
+
+        st.markdown("### Lịch sử nhận về theo ngày")
+        if df_nhan_ve_log.empty:
+            st.caption("Chưa có dữ liệu nhận về.")
+        else:
+            view_recv = df_nhan_ve_log.copy()
+
+            # 1. Tự động tìm tên cột (Bỏ qua viết hoa/thường)
+            col_ten = next(
+                (c for c in ["tool_name", "TOOL_NAME", "TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU", "TÊN DỤNG CỤ"] if c in view_recv.columns),
+                None,
+            )
+            col_sl = next(
+                (c for c in ["quantity", "QUANTITY", "SỐ LƯỢNG", "SO_LUONG"] if c in view_recv.columns),
+                None,
+            )
+            col_sl_con = next(
+                (c for c in ["remaining_qty", "REMAINING_QTY", "SL_CÒN", "SL CON", "SO_LUONG_CON"] if c in view_recv.columns),
+                None,
+            )
+            col_ngay = next(
+                (c for c in ["date_received", "DATE_RECEIVED", "date_received_date", "DATE_RECEIVED_DATE", "__rcv"] if c in view_recv.columns),
+                None,
+            )
+            col_han = next(
+                (c for c in ["expiry_date", "EXPIRY_DATE", "expiry_date_date", "EXPIRY_DATE_DATE", "__exp"] if c in view_recv.columns),
+                None,
+            )
+
+            if col_ten is None or col_sl is None or col_ngay is None:
+                st.warning("Không tìm thấy cột dữ liệu nhận về cần thiết (tên, số lượng hoặc ngày nhận).")
+            else:
+                if col_ngay == "__rcv":
+                    view_recv["__d"] = view_recv["__rcv"].dt.date
                 else:
-                    view_recv = df_nhan_ve_log.copy()
-                    
-                    # 1. Tự động tìm tên cột (Bỏ qua viết hoa/thường)
-                    col_ten = next(
-                        (c for c in ["tool_name", "TOOL_NAME", "TÊN BỘ DỤNG CỤ", "TEN_DUNG_CU", "TÊN DỤNG CỤ"] if c in view_recv.columns),
-                        None,
+                    view_recv["__d"] = view_recv[col_ngay].apply(_parse_datetime_safe).dt.date
+                view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
+
+                if view_recv.empty:
+                    st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
+                else:
+                    # 2) Gom tên tránh lệch hoa/thường.
+                    view_recv["_TEMP_NAME"] = view_recv[col_ten].astype(str).str.strip().str.lower()
+
+                    # 3) Gộp nhóm.
+                    agg_map: Dict[str, str] = {col_sl: "sum", col_ngay: "first"}
+                    if col_sl_con is not None and col_sl_con in view_recv.columns:
+                        agg_map[col_sl_con] = "sum"
+                    if col_han is not None and col_han in view_recv.columns:
+                        agg_map[col_han] = "first"
+
+                    view_recv_grouped = view_recv.groupby("_TEMP_NAME", as_index=False).agg(agg_map)
+                    view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
+
+                    # 4) Hiển thị.
+                    display_cols = [col_ten, col_sl]
+                    if col_sl_con is not None and col_sl_con in view_recv_grouped.columns:
+                        display_cols.append(col_sl_con)
+                    if col_ngay is not None and col_ngay in view_recv_grouped.columns:
+                        display_cols.append(col_ngay)
+                    if col_han is not None and col_han in view_recv_grouped.columns:
+                        display_cols.append(col_han)
+
+                    st.dataframe(
+                        view_recv_grouped[display_cols],
+                        use_container_width=True,
+                        hide_index=True,
                     )
-                    col_sl = next(
-                        (c for c in ["quantity", "QUANTITY", "SỐ LƯỢNG", "SO_LUONG"] if c in view_recv.columns),
-                        None,
-                    )
-                    col_sl_con = next(
-                        (c for c in ["remaining_qty", "REMAINING_QTY", "SL_CÒN", "SL CON", "SO_LUONG_CON"] if c in view_recv.columns),
-                        None,
-                    )
-                    col_ngay = next(
-                        (c for c in ["date_received", "DATE_RECEIVED", "date_received_date", "DATE_RECEIVED_DATE", "__rcv"] if c in view_recv.columns),
-                        None,
-                    )
-                    col_han = next(
-                        (c for c in ["expiry_date", "EXPIRY_DATE", "expiry_date_date", "EXPIRY_DATE_DATE", "__exp"] if c in view_recv.columns),
-                        None,
-                    )
-
-                    if col_ten is None or col_sl is None or col_ngay is None:
-                        st.warning("Không tìm thấy cột dữ liệu nhận về cần thiết (tên, số lượng hoặc ngày nhận).")
-                        return
-
-                    if col_ngay == "__rcv":
-                        view_recv["__d"] = view_recv["__rcv"].dt.date
-                    else:
-                        view_recv["__d"] = view_recv[col_ngay].apply(_parse_datetime_safe).dt.date
-                    view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
-                    
-                    if view_recv.empty:
-                        st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
-                    else:
-                        # 2. XỬ LÝ VIẾT HOA/THƯỜNG Ở ĐÂY:
-                        # Chuyển tên về viết thường và cắt khoảng trắng trước khi gộp
-                        view_recv["_TEMP_NAME"] = view_recv[col_ten].astype(str).str.strip().str.lower()
-
-                        # 3. Gộp nhóm
-                        agg_map: Dict[str, str] = {col_sl: "sum", col_ngay: "first"}
-                        if col_sl_con is not None and col_sl_con in view_recv.columns:
-                            agg_map[col_sl_con] = "sum"
-                        if col_han is not None and col_han in view_recv.columns:
-                            agg_map[col_han] = "first"
-
-                        view_recv_grouped = view_recv.groupby("_TEMP_NAME", as_index=False).agg(agg_map)
-
-                        # Đổi lại tên cột hiển thị cho đẹp
-                        view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
-
-                        # 4. Hiển thị
-                        display_cols = [col_ten, col_sl]
-                        if col_sl_con is not None and col_sl_con in view_recv_grouped.columns:
-                            display_cols.append(col_sl_con)
-                        if col_ngay is not None and col_ngay in view_recv_grouped.columns:
-                            display_cols.append(col_ngay)
-                        if col_han is not None and col_han in view_recv_grouped.columns:
-                            display_cols.append(col_han)
-
-                        st.dataframe(
-                            view_recv_grouped[display_cols],
-                            use_container_width=True,
-                            hide_index=True,
-                        )
 
 
     with t4:
@@ -1364,6 +1363,13 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
             fallback_tool_cols = [c for c in ("TEN_DUNG_CU", "TOOL_NAME", "TÊN DỤNG CỤ") if c in df_dm.columns]
             if fallback_tool_cols:
                 df_dm["TÊN BỘ DỤNG CỤ"] = df_dm[fallback_tool_cols[0]].astype(str)
+        # Nếu thiếu CƠ SỐ, tạo cột suy diễn để không mất báo cáo.
+        if "CƠ SỐ" not in df_dm.columns and {"TỒN SẴN SÀNG", "ĐANG HẤP"}.issubset(df_dm.columns):
+            df_dm["CƠ SỐ"] = (
+                pd.to_numeric(df_dm["TỒN SẴN SÀNG"], errors="coerce").fillna(0)
+                + pd.to_numeric(df_dm["ĐANG HẤP"], errors="coerce").fillna(0)
+            ).astype(int)
+
         # Ưu tiên hiển thị cột CƠ SỐ nếu Supabase đã có sẵn.
         has_co_so = "CƠ SỐ" in df_dm.columns
         has_ton_san_sang = "TỒN SẴN SÀNG" in df_dm.columns
