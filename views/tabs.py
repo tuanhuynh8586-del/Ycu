@@ -1150,26 +1150,41 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         if not any_failed:
                             st.rerun()
         st.markdown("### Lịch sử nhận về theo ngày")
-        if df_nhan_ve_log.empty:
-            st.caption("Chưa có dữ liệu nhận về.")
-        else:
-            view_recv = df_nhan_ve_log.copy()
-            view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
-            # `st.date_input` trả về `datetime.date`
-            view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
-            if view_recv.empty:
-                st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
-            else:
-                view_recv = stable_sort_dataframe(
-                    view_recv,
-                    primary_columns=["DATE_RECEIVED", "EXPIRY_DATE", "id"],
-                    fallback_name_columns=["TOOL_NAME"],
-                )
-                st.dataframe(
-                    view_recv[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                if df_nhan_ve_log.empty:
+                    st.caption("Chưa có dữ liệu nhận về.")
+                else:
+                    view_recv = df_nhan_ve_log.copy()
+                    view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
+                    view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
+                    
+                    if view_recv.empty:
+                        st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
+                    else:
+                        # Gộp nhóm để hiển thị 1 dòng cho mỗi bộ dụng cụ
+                        view_recv["TOOL_NAME"] = view_recv["TOOL_NAME"].astype(str).str.strip()
+                        view_recv_grouped = (
+                            view_recv.groupby("TOOL_NAME", as_index=False)
+                            .agg({
+                                "QUANTITY": "sum",
+                                "REMAINING_QTY": "sum",
+                                "DATE_RECEIVED": "first",
+                                "EXPIRY_DATE": "first"
+                            })
+                        )
+
+                        # Sắp xếp lại bảng đã gộp
+                        view_recv_grouped = stable_sort_dataframe(
+                            view_recv_grouped,
+                            primary_columns=["DATE_RECEIVED", "EXPIRY_DATE"],
+                            fallback_name_columns=["TOOL_NAME"],
+                        )
+
+                        # Hiển thị bảng đã gộp sạch sẽ
+                        st.dataframe(
+                            view_recv_grouped[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
     with t4:
         st.subheader("📊 Báo cáo kho")
