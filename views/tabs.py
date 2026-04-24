@@ -536,9 +536,8 @@ def _parse_date_safe(value: Any) -> Optional[date]:
 def _normalize_text_key(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = "".join(ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn")
-    for ch in ("_", "-", ".", "/", " "):
-        text = text.replace(ch, "")
-    return text
+    # Loại toàn bộ ký tự phân cách/ký tự ẩn để tránh lệch tên giữa các bảng.
+    return "".join(ch for ch in text if ch.isalnum())
 
 
 def _is_ready_status(value: Any) -> bool:
@@ -787,7 +786,16 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
     if "TRANG_THAI" in work.columns:
         work = work[work["TRANG_THAI"].apply(_is_ready_status)].copy()
     tool_name_key = _normalize_text_key(tool_name)
-    work = work[work["TEN_DUNG_CU"].apply(_normalize_text_key) == tool_name_key].copy()
+    work["_TOOL_KEY"] = work["TEN_DUNG_CU"].apply(_normalize_text_key)
+    work_exact = work[work["_TOOL_KEY"] == tool_name_key].copy()
+    # Fallback mềm: tên lệch kiểu viết/đánh máy nhẹ vẫn map được.
+    if work_exact.empty and tool_name_key:
+        work_exact = work[
+            work["_TOOL_KEY"].apply(
+                lambda x: bool(x) and (x in tool_name_key or tool_name_key in x)
+            )
+        ].copy()
+    work = work_exact
     work["SO_LUONG"] = pd.to_numeric(work["SO_LUONG"], errors="coerce").fillna(0).astype(int)
     work = work[work["SO_LUONG"] > 0].copy()
     if "HAN_DUNG_DATE" in work.columns:
@@ -798,11 +806,12 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
         work["__nhap"] = pd.to_datetime(work["NGAY_HAP_DATE"], errors="coerce")
     else:
         work["__nhap"] = work.get("NGAY_HAP", pd.Series(dtype="object")).apply(_parse_datetime_safe)
-    return stable_sort_dataframe(
+    work = stable_sort_dataframe(
         work,
         primary_columns=["__exp", "__nhap", "id"],
         fallback_name_columns=["TEN_DUNG_CU"],
     )
+    return work.drop(columns=["_TOOL_KEY"], errors="ignore")
 
 
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
@@ -897,6 +906,28 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 f"ℹ️ `{tool_selected}` chưa có dữ liệu lô ready/sẵn sàng trong kho_lo_hap. "
                                 "Hệ thống vẫn xuất theo tồn sẵn sàng hiện có."
                             )
+                            candidate_rows = _normalize_batch_columns(df_batches)
+                            if not candidate_rows.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(candidate_rows.columns):
+                                candidate_rows = candidate_rows.copy()
+                                if "TRANG_THAI" in candidate_rows.columns:
+                                    candidate_rows = candidate_rows[candidate_rows["TRANG_THAI"].apply(_is_ready_status)].copy()
+                                candidate_rows["SO_LUONG"] = pd.to_numeric(candidate_rows["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+                                candidate_rows = candidate_rows[candidate_rows["SO_LUONG"] > 0].copy()
+                                tool_key = _normalize_text_key(tool_selected)
+                                candidate_rows["_TOOL_KEY"] = candidate_rows["TEN_DUNG_CU"].apply(_normalize_text_key)
+                                close_name_rows = candidate_rows[
+                                    candidate_rows["_TOOL_KEY"].apply(
+                                        lambda x: bool(x) and bool(tool_key) and (x in tool_key or tool_key in x)
+                                    )
+                                ].copy()
+                                if not close_name_rows.empty:
+                                    sample_names = ", ".join(
+                                        close_name_rows["TEN_DUNG_CU"].astype(str).dropna().head(3).tolist()
+                                    )
+                                    st.caption(
+                                        "Có thể lệch tên giữa `kho_danhmuc` và `kho_lo_hap`. "
+                                        f"Tên gần đúng trong lô: {sample_names}"
+                                    )
                             qty_take = st.number_input(
                                 f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
                                 min_value=1,
@@ -926,6 +957,28 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 f"ℹ️ `{tool_selected}` chưa có lô ready/sẵn sàng khả dụng. "
                                 "Hệ thống vẫn xuất theo tồn sẵn sàng hiện có."
                             )
+                            candidate_rows = _normalize_batch_columns(df_batches)
+                            if not candidate_rows.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(candidate_rows.columns):
+                                candidate_rows = candidate_rows.copy()
+                                if "TRANG_THAI" in candidate_rows.columns:
+                                    candidate_rows = candidate_rows[candidate_rows["TRANG_THAI"].apply(_is_ready_status)].copy()
+                                candidate_rows["SO_LUONG"] = pd.to_numeric(candidate_rows["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+                                candidate_rows = candidate_rows[candidate_rows["SO_LUONG"] > 0].copy()
+                                tool_key = _normalize_text_key(tool_selected)
+                                candidate_rows["_TOOL_KEY"] = candidate_rows["TEN_DUNG_CU"].apply(_normalize_text_key)
+                                close_name_rows = candidate_rows[
+                                    candidate_rows["_TOOL_KEY"].apply(
+                                        lambda x: bool(x) and bool(tool_key) and (x in tool_key or tool_key in x)
+                                    )
+                                ].copy()
+                                if not close_name_rows.empty:
+                                    sample_names = ", ".join(
+                                        close_name_rows["TEN_DUNG_CU"].astype(str).dropna().head(3).tolist()
+                                    )
+                                    st.caption(
+                                        "Có thể lệch tên giữa `kho_danhmuc` và `kho_lo_hap`. "
+                                        f"Tên gần đúng trong lô: {sample_names}"
+                                    )
                             qty_take = st.number_input(
                                 f"Số lượng lấy `{tool_selected}` (tồn hiện có: {ton_san_sang}):",
                                 min_value=1,
