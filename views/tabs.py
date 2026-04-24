@@ -742,8 +742,11 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
     if not {"TEN_DUNG_CU", "SO_LUONG"}.issubset(work.columns):
         return pd.DataFrame()
     if "TRANG_THAI" in work.columns:
-        work = work[work["TRANG_THAI"].astype(str).str.lower() == "ready"]
-    work = work[work["TEN_DUNG_CU"].astype(str) == str(tool_name)].copy()
+        work = work[work["TRANG_THAI"].astype(str).str.strip().str.lower() == "ready"]
+    tool_name_key = str(tool_name).strip().lower()
+    work = work[
+        work["TEN_DUNG_CU"].astype(str).str.strip().str.lower() == tool_name_key
+    ].copy()
     work["SO_LUONG"] = pd.to_numeric(work["SO_LUONG"], errors="coerce").fillna(0).astype(int)
     work = work[work["SO_LUONG"] > 0].copy()
     if "HAN_DUNG_DATE" in work.columns:
@@ -773,14 +776,17 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
     df_dm["TỒN SẴN SÀNG"] = pd.to_numeric(df_dm.get("TỒN SẴN SÀNG", 0), errors="coerce").fillna(0).astype(int)
     df_dm["ĐANG HẤP"] = pd.to_numeric(df_dm.get("ĐANG HẤP", 0), errors="coerce").fillna(0).astype(int)
+    df_dm["_ORIGINAL_POS"] = range(len(df_dm))
     df_dm = stable_sort_dataframe(
         df_dm,
-        primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX"],
+        primary_columns=["STT", "THỨ TỰ", "ORDER_INDEX", "_ORIGINAL_POS"],
         fallback_name_columns=["TÊN BỘ DỤNG CỤ"],
     )
     df_gui_hap_log = _normalize_kho_columns(lay_du_lieu_supabase("kho_gui_hap_log"))
     df_nhan_ve_log_raw = lay_du_lieu_supabase("kho_nhan_ve_log")
     df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
+    if df_nhan_ve_log.empty and not df_nhan_ve_log_raw.empty:
+        df_nhan_ve_log = df_nhan_ve_log_raw.copy()
     df_batches = _normalize_batch_columns(lay_du_lieu_supabase("kho_lo_hap"))
     if "TÊN BỘ DỤNG CỤ" not in df_batches.columns and "TEN_DUNG_CU" in df_batches.columns:
         df_batches["TÊN BỘ DỤNG CỤ"] = df_batches["TEN_DUNG_CU"].astype(str)
@@ -1371,6 +1377,9 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     agg_map: Dict[str, Any] = {"TÊN BỘ DỤNG CỤ": "first"}
                     agg_map.update({c: "sum" for c in sum_cols})
                     view_dm = view_dm.groupby("TÊN BỘ DỤNG CỤ", as_index=False).agg(agg_map)
+                    original_order = {name: idx for idx, name in enumerate(df_dm["TÊN BỘ DỤNG CỤ"].astype(str).tolist())}
+                    view_dm["_ORIG_ORDER"] = view_dm["TÊN BỘ DỤNG CỤ"].astype(str).map(original_order)
+                    view_dm = view_dm.sort_values(by=["_ORIG_ORDER"], kind="stable").drop(columns=["_ORIG_ORDER"], errors="ignore")
 
             # Nếu dùng fallback "TỒN SẴN SÀNG" thay cho CƠ SỐ thì đổi nhãn hiển thị cho đúng ý nghĩa
             if (not has_co_so) and ("TỒN SẴN SÀNG" in view_dm.columns) and (not show_4_cols):
