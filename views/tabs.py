@@ -1160,10 +1160,13 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                     if view_recv.empty:
                         st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
                     else:
-                        # Gộp nhóm để hiển thị 1 dòng cho mỗi bộ dụng cụ
-                        view_recv["TOOL_NAME"] = view_recv["TOOL_NAME"].astype(str).str.strip()
+                        # Gộp nhóm (Anh kiểm tra tên cột trong bảng của anh nhé!)
+                        # Em dùng 'TEN_DUNG_CU' thay cho 'TOOL_NAME'
+                        target_col = "TEN_DUNG_CU" 
+                        
+                        view_recv[target_col] = view_recv[target_col].astype(str).str.strip()
                         view_recv_grouped = (
-                            view_recv.groupby("TOOL_NAME", as_index=False)
+                            view_recv.groupby(target_col, as_index=False)
                             .agg({
                                 "QUANTITY": "sum",
                                 "REMAINING_QTY": "sum",
@@ -1172,16 +1175,14 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                             })
                         )
 
-                        # Sắp xếp lại bảng đã gộp
                         view_recv_grouped = stable_sort_dataframe(
                             view_recv_grouped,
                             primary_columns=["DATE_RECEIVED", "EXPIRY_DATE"],
-                            fallback_name_columns=["TOOL_NAME"],
+                            fallback_name_columns=[target_col],
                         )
 
-                        # Hiển thị bảng đã gộp sạch sẽ
                         st.dataframe(
-                            view_recv_grouped[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
+                            view_recv_grouped[[target_col, "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
                             use_container_width=True,
                             hide_index=True,
                         )
