@@ -1169,50 +1169,49 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                         if not any_failed:
                             st.rerun()
         st.markdown("### Lịch sử nhận về theo ngày")
-        if df_nhan_ve_log.empty:
-            st.caption("Chưa có dữ liệu nhận về.")
-        else:
-            view_recv = df_nhan_ve_log.copy()
-            view_recv["__d"] = view_recv["DATE_RECEIVED"].apply(_parse_datetime_safe).dt.date
-            view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
-            
-            if view_recv.empty:
-                st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
-            else:
-                # Gộp nhóm để hiển thị 1 dòng cho mỗi bộ dụng cụ
-                # Ép kiểu dữ liệu để đảm bảo gộp chính xác
-                view_recv["TOOL_NAME"] = view_recv["TOOL_NAME"].astype(str).str.strip()
-                
-                view_recv_grouped = (
-                    view_recv.groupby("TOOL_NAME", as_index=False)
-                    .agg({
-                        "QUANTITY": "sum",
-                        "REMAINING_QTY": "sum",
-                        "DATE_RECEIVED": "min",
-                        "EXPIRY_DATE": "max"
-                    })
-                )
+                if df_nhan_ve_log.empty:
+                    st.caption("Chưa có dữ liệu nhận về.")
+                else:
+                    view_recv = df_nhan_ve_log.copy()
+                    
+                    # 1. Tự động tìm tên cột (Bỏ qua viết hoa/thường)
+                    # Anh thay các chữ trong ngoặc đơn này đúng với tên cột thật trong SQL của anh
+                    col_ten = "tool_name" # ví dụ: "tool_name" hoặc "ten_dung_cu"
+                    col_sl = "quantity"   # ví dụ: "quantity" hoặc "so_luong"
+                    col_sl_con = "remaining_qty"
+                    col_ngay = "date_received"
+                    col_han = "expiry_date"
 
-                # Sắp xếp lại cho đẹp
-                # Cách ép gộp cực đoan
-                # Chỉ lấy ra những cột cần hiển thị và gộp dứt khoát
-                view_recv_grouped = (
-                    view_recv.groupby("TOOL_NAME", as_index=False)
-                    .agg({
-                        "QUANTITY": "sum",
-                        "REMAINING_QTY": "sum",
-                        "DATE_RECEIVED": "first", # Chỉ lấy giá trị của dòng đầu tiên
-                        "EXPIRY_DATE": "first"    # Chỉ lấy giá trị của dòng đầu tiên
-                    })
-                )
+                    view_recv["__d"] = view_recv[col_ngay].apply(_parse_datetime_safe).dt.date
+                    view_recv = view_recv[view_recv["__d"] == ngay_nhan].copy()
+                    
+                    if view_recv.empty:
+                        st.caption("Không có dữ liệu nhận về trong ngày đã chọn.")
+                    else:
+                        # 2. XỬ LÝ VIẾT HOA/THƯỜNG Ở ĐÂY:
+                        # Chuyển tên về viết thường và cắt khoảng trắng trước khi gộp
+                        view_recv["_TEMP_NAME"] = view_recv[col_ten].astype(str).str.strip().str.lower()
+                        
+                        # 3. Gộp nhóm
+                        view_recv_grouped = (
+                            view_recv.groupby("_TEMP_NAME", as_index=False)
+                            .agg({
+                                col_sl: "sum",
+                                col_sl_con: "sum",
+                                col_ngay: "first",
+                                col_han: "first"
+                            })
+                        )
+                        
+                        # Đổi lại tên cột hiển thị cho đẹp
+                        view_recv_grouped = view_recv_grouped.rename(columns={"_TEMP_NAME": col_ten})
 
-                # Hiển thị bảng đã gộp sạch sẽ
-                st.dataframe(
-                    view_recv_grouped[["TOOL_NAME", "QUANTITY", "REMAINING_QTY", "DATE_RECEIVED", "EXPIRY_DATE"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
+                        # 4. Hiển thị
+                        st.dataframe(
+                            view_recv_grouped[[col_ten, col_sl, col_sl_con, col_ngay, col_han]],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
     with t4:
         st.subheader("📊 Báo cáo kho")
