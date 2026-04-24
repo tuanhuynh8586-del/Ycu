@@ -814,6 +814,12 @@ def _get_fefo_batches_from_cache(df_batches: pd.DataFrame, tool_name: str) -> pd
     return work.drop(columns=["_TOOL_KEY"], errors="ignore")
 
 
+def _fetch_kho_lo_hap_batches(force_refresh: bool = False) -> pd.DataFrame:
+    if force_refresh:
+        lay_du_lieu_supabase.clear()
+    return _normalize_batch_columns(lay_du_lieu_supabase("kho_lo_hap"))
+
+
 def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     st.header("🏥 QUẢN LÝ DỤNG CỤ & TIỆT TRÙNG")
     df_dm = _normalize_kho_columns(lay_du_lieu_supabase("kho_danhmuc"))
@@ -838,7 +844,7 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
     df_nhan_ve_log = _build_receive_log_from_fifo(df_nhan_ve_log_raw)
     if df_nhan_ve_log.empty and not df_nhan_ve_log_raw.empty:
         df_nhan_ve_log = df_nhan_ve_log_raw.copy()
-    df_batches = _normalize_batch_columns(lay_du_lieu_supabase("kho_lo_hap"))
+    df_batches = _fetch_kho_lo_hap_batches()
     if "TÊN BỘ DỤNG CỤ" not in df_batches.columns and "TEN_DUNG_CU" in df_batches.columns:
         df_batches["TÊN BỘ DỤNG CỤ"] = df_batches["TEN_DUNG_CU"].astype(str)
 
@@ -893,6 +899,12 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
 
                     for tool_selected in selected_tools:
                         fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
+                        if fefo_df.empty:
+                            # Retry 1 lần với dữ liệu mới nhất để tránh báo sai do cache cũ/rỗng.
+                            fresh_batches = _fetch_kho_lo_hap_batches(force_refresh=True)
+                            if not fresh_batches.empty:
+                                df_batches = fresh_batches
+                                fefo_df = _get_fefo_batches_from_cache(df_batches, tool_selected)
                         selected_dm = df_dm[df_dm["TÊN BỘ DỤNG CỤ"] == tool_selected]
                         ton_san_sang = 0
                         if not selected_dm.empty:
@@ -906,6 +918,11 @@ def render_tab_kho_dung_cu(danh_sach_ten: List[str]) -> None:
                                 f"ℹ️ `{tool_selected}` chưa có dữ liệu lô ready/sẵn sàng trong kho_lo_hap. "
                                 "Hệ thống vẫn xuất theo tồn sẵn sàng hiện có."
                             )
+                            if not df_batches.empty and {"TRANG_THAI", "SO_LUONG"}.issubset(df_batches.columns):
+                                dbg = df_batches.copy()
+                                dbg["SO_LUONG"] = pd.to_numeric(dbg["SO_LUONG"], errors="coerce").fillna(0).astype(int)
+                                dbg = dbg[(dbg["TRANG_THAI"].apply(_is_ready_status)) & (dbg["SO_LUONG"] > 0)]
+                                st.caption(f"Debug: app đang đọc {len(dbg)} lô ready có số lượng > 0 từ kho_lo_hap.")
                             candidate_rows = _normalize_batch_columns(df_batches)
                             if not candidate_rows.empty and {"TEN_DUNG_CU", "SO_LUONG"}.issubset(candidate_rows.columns):
                                 candidate_rows = candidate_rows.copy()
